@@ -42,6 +42,7 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
   const [suggestion, setSuggestion] = useState('');
   const [showTemplates, setShowTemplates] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<WAMessage | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const messages = useQuery({ queryKey: ['wa-messages', conversation._id], queryFn: () => api<WAMessage[]>(`/whatsapp/conversations/${conversation._id}/messages`) });
@@ -50,8 +51,9 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
     const socket = getSocket();
     const onMessage = (payload: { conversationId: string; message: WAMessage }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => [...prev, payload.message]); };
     const onStatus = (payload: { conversationId: string; messageId: string; status: WAMessage['status'] }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.map(m => (m._id === payload.messageId ? { ...m, status: payload.status } : m))); };
-    socket.on('message:new', onMessage); socket.on('message:status', onStatus);
-    return () => { socket.off('message:new', onMessage); socket.off('message:status', onStatus); };
+    const onDeletedMessage = (payload: { conversationId: string; messageId: string }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.filter(m => m._id !== payload.messageId)); };
+    socket.on('message:new', onMessage); socket.on('message:status', onStatus); socket.on('message:deleted', onDeletedMessage);
+    return () => { socket.off('message:new', onMessage); socket.off('message:status', onStatus); socket.off('message:deleted', onDeletedMessage); };
   }, [conversation._id, qc]);
 
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [messages.data?.length]);
@@ -77,6 +79,15 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
       qc.removeQueries({ queryKey: ['wa-messages', conversation._id] });
       qc.invalidateQueries({ queryKey: ['wa-conversations'] });
       onDeleted?.();
+    },
+  });
+  const deleteMessage = useMutation({
+    mutationFn: (messageId: string) => api(`/whatsapp/conversations/${conversation._id}/messages/${messageId}`, { method: 'DELETE' }),
+    onSuccess: (_data, messageId) => {
+      qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.filter(message => message._id !== messageId));
+      setDeleteTarget(null);
+      qc.invalidateQueries({ queryKey: ['wa-conversations'] });
+      qc.invalidateQueries({ queryKey: ['wa-conversation', conversation._id] });
     },
   });
   const canDelete = user && ['Administrator', 'Sales Manager'].includes(user.role.name);
@@ -116,16 +127,32 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
       </div>
     </Modal>}
 
+    {deleteTarget && <Modal title="Delete this message?" width="max-w-md" onClose={() => { if (!deleteMessage.isPending) { setDeleteTarget(null); deleteMessage.reset(); } }}>
+      <div className="space-y-3 p-5 text-sm text-slate-600">
+        <div className="max-h-28 overflow-auto rounded-md bg-slate-100 p-3 text-xs text-slate-700">
+          {deleteTarget.text || deleteTarget.caption || `[${deleteTarget.type} message]`}
+        </div>
+        <p>This permanently removes the message from this CRM conversation.</p>
+        <p className="text-xs text-slate-400">It will remain visible in WhatsApp on the customer's and sender's phones.</p>
+        {deleteMessage.isError && <p className="text-xs text-red-600">{(deleteMessage.error as any)?.message ?? 'Could not delete this message.'}</p>}
+      </div>
+      <div className="flex justify-end gap-2 border-t bg-slate-50 p-3">
+        <Button type="button" disabled={deleteMessage.isPending} onClick={() => { setDeleteTarget(null); deleteMessage.reset(); }}>Cancel</Button>
+        <Button className="!border-red-600 !bg-red-600 !text-white hover:!bg-red-700" disabled={deleteMessage.isPending} onClick={() => deleteMessage.mutate(deleteTarget._id)}>{deleteMessage.isPending ? 'Deleting…' : 'Delete message'}</Button>
+      </div>
+    </Modal>}
+
     <div ref={listRef} className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
       {messages.isLoading && <div className="text-center text-xs text-white/40">Loading messages…</div>}
       {messages.data?.map(message => {
         const mine = message.direction === 'OUTBOUND';
-        return <div key={message._id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+        return <div key={message._id} className={`group flex items-center gap-1 ${mine ? 'justify-end' : 'justify-start'}`}>
           <div className={`max-w-[75%] rounded-xl px-3 py-2 text-sm shadow-sm ${mine ? (message.aiGenerated ? 'bg-[#046c4e] text-white' : 'bg-[#005c4b] text-white') : 'bg-[#202c33] text-[#e9edef]'}`}>
             {message.aiGenerated && <div className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-white/70"><Bot size={11} />AI</div>}
             {message.type === 'text' ? <p className="whitespace-pre-wrap break-words">{message.text}</p> : <MediaBubble message={message} />}
             <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${mine ? 'text-white/55' : 'text-white/40'}`}>{time(message.timestamp)}{mine && <StatusTick status={message.status} />}</div>
           </div>
+          {canDelete && <button type="button" title="Delete message from CRM" aria-label="Delete message from CRM" disabled={deleteMessage.isPending} className="rounded p-1.5 text-white/35 opacity-40 transition hover:bg-red-500/15 hover:text-red-300 focus:opacity-100 disabled:opacity-20 sm:opacity-0 sm:group-hover:opacity-100" onClick={() => { deleteMessage.reset(); setDeleteTarget(message); }}><Trash2 size={14} /></button>}
         </div>;
       })}
       {!messages.isLoading && !messages.data?.length && <div className="text-center text-xs text-white/40">No messages yet.</div>}

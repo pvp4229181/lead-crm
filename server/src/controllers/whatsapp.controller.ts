@@ -82,6 +82,42 @@ export async function listMessages(req: Request, res: Response) {
   res.json(messages.reverse());
 }
 
+// Removes one message from the CRM copy of a conversation. Meta does not expose a
+// general delete-for-everyone API, so this deliberately does not claim to remove the
+// message from either participant's phone. Keep the conversation's list preview in
+// sync when its newest message (or newest inbound message) is deleted.
+export async function deleteMessage(req: Request, res: Response) {
+  const conversation = await scopedConversation(req, String(req.params.id));
+  const message = await WhatsAppMessage.findOne({ _id: req.params.messageId, conversation: conversation._id });
+  if (!message) throw new ApiError(404, 'Message not found');
+
+  await message.deleteOne();
+
+  const [latest, latestInbound] = await Promise.all([
+    WhatsAppMessage.findOne({ conversation: conversation._id }).sort({ timestamp: -1, _id: -1 }).lean(),
+    WhatsAppMessage.findOne({ conversation: conversation._id, direction: 'INBOUND' }).sort({ timestamp: -1, _id: -1 }).select('timestamp').lean(),
+  ]);
+  const update: { $set?: Record<string, unknown>; $unset?: Record<string, 1> } = {};
+  if (latest) {
+    update.$set = {
+      lastMessage: latest.text?.slice(0, 120) ?? (latest.type !== 'text' ? `[${latest.type}]` : ''),
+      lastMessageAt: latest.timestamp,
+    };
+  } else {
+    update.$unset = { lastMessage: 1, lastMessageAt: 1 };
+  }
+  if (latestInbound) {
+    update.$set = { ...(update.$set ?? {}), lastInboundAt: latestInbound.timestamp };
+  } else {
+    update.$unset = { ...(update.$unset ?? {}), lastInboundAt: 1 };
+  }
+  await WhatsAppConversation.updateOne({ _id: conversation._id }, update);
+
+  emitToConversation(String(conversation._id), 'message:deleted', { messageId: String(message._id) });
+  emitToConversation(String(conversation._id), 'conversation:updated', {});
+  res.status(204).end();
+}
+
 export async function getMedia(req: Request, res: Response) {
   const message = await WhatsAppMessage.findById(req.params.id);
   if (!message?.mediaId) throw new ApiError(404, 'Media not found');

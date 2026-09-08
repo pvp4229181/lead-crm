@@ -115,9 +115,40 @@ ok('greeting message stored as a template message', (await models.WhatsAppMessag
 ok('lead is never greeted twice', (await greetNewLead(greetLead._id)) === null);
 
 // --- Deleting a chat ---------------------------------------------------------
-const { deleteConversation } = await import('../dist/controllers/whatsapp.controller.js');
+const { deleteConversation, deleteMessage } = await import('../dist/controllers/whatsapp.controller.js');
 const resStub = () => { const r: any = { code: 0, status(c: number) { r.code = c; return r; }, end() { return r; }, json() { return r; } }; return r; };
 const adminUser = { _id: user._id, role: { name: 'Administrator' } };
+
+// --- Deleting one message ---------------------------------------------------
+const messageConv = await models.WhatsAppConversation.create({
+  phoneNumber: '919000000001', lastMessage: 'Newest agent reply',
+  lastMessageAt: new Date('2026-01-02T10:00:00Z'), lastInboundAt: new Date('2026-01-01T10:00:00Z'),
+});
+const olderMessage = await models.WhatsAppMessage.create({
+  conversation: messageConv._id, direction: 'INBOUND', type: 'text', text: 'Older customer message',
+  timestamp: new Date('2026-01-01T10:00:00Z'), status: 'DELIVERED',
+});
+const newestMessage = await models.WhatsAppMessage.create({
+  conversation: messageConv._id, direction: 'OUTBOUND', type: 'text', text: 'Newest agent reply',
+  timestamp: new Date('2026-01-02T10:00:00Z'), status: 'SENT',
+});
+const deleteMessageRes = resStub();
+await deleteMessage({ user: adminUser, params: { id: String(messageConv._id), messageId: String(newestMessage._id) } } as any, deleteMessageRes);
+const afterOneMessageDelete = await models.WhatsAppConversation.findById(messageConv._id);
+ok('deleting one message responds 204', deleteMessageRes.code === 204, deleteMessageRes.code);
+ok('only the selected message is deleted', !(await models.WhatsAppMessage.exists({ _id: newestMessage._id })) && Boolean(await models.WhatsAppMessage.exists({ _id: olderMessage._id })));
+ok('conversation preview falls back to the previous message', afterOneMessageDelete?.lastMessage === 'Older customer message', afterOneMessageDelete?.lastMessage);
+
+let wrongConversationDenied = false;
+const otherMessageConv = await models.WhatsAppConversation.create({ phoneNumber: '919000000002' });
+try { await deleteMessage({ user: adminUser, params: { id: String(otherMessageConv._id), messageId: String(olderMessage._id) } } as any, resStub()); }
+catch (error: any) { wrongConversationDenied = error?.status === 404; }
+ok('a message cannot be deleted through another conversation', wrongConversationDenied);
+
+await deleteMessage({ user: adminUser, params: { id: String(messageConv._id), messageId: String(olderMessage._id) } } as any, resStub());
+const emptyMessageConv = await models.WhatsAppConversation.findById(messageConv._id);
+ok('deleting the last message keeps the conversation', Boolean(emptyMessageConv));
+ok('an empty conversation has no stale preview', !emptyMessageConv?.lastMessage && !emptyMessageConv?.lastMessageAt && !emptyMessageConv?.lastInboundAt, emptyMessageConv);
 
 await models.AIConversationSummary.create({ conversation: gConv!._id, lead: greetLead._id, summary: 'Interested in the portal' });
 const beforeDelete = await models.WhatsAppMessage.countDocuments({ conversation: gConv!._id });
