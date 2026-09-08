@@ -45,11 +45,13 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
   const [deleteTarget, setDeleteTarget] = useState<WAMessage | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const messages = useQuery({ queryKey: ['wa-messages', conversation._id], queryFn: () => api<WAMessage[]>(`/whatsapp/conversations/${conversation._id}/messages`) });
+  // Vercel serverless cannot keep Socket.IO connections alive. Poll the open chat every
+  // three seconds as a fallback so inbound webhook messages appear quickly in production.
+  const messages = useQuery({ queryKey: ['wa-messages', conversation._id], queryFn: () => api<WAMessage[]>(`/whatsapp/conversations/${conversation._id}/messages`), refetchInterval: 3000, refetchIntervalInBackground: false, refetchOnWindowFocus: 'always' });
 
   useEffect(() => {
     const socket = getSocket();
-    const onMessage = (payload: { conversationId: string; message: WAMessage }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => [...prev, payload.message]); };
+    const onMessage = (payload: { conversationId: string; message: WAMessage }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.some(message => message._id === payload.message._id) ? prev : [...prev, payload.message]); };
     const onStatus = (payload: { conversationId: string; messageId: string; status: WAMessage['status'] }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.map(m => (m._id === payload.messageId ? { ...m, status: payload.status } : m))); };
     const onDeletedMessage = (payload: { conversationId: string; message: WAMessage }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.map(message => message._id === payload.message._id ? payload.message : message)); };
     socket.on('message:new', onMessage); socket.on('message:status', onStatus); socket.on('message:deleted', onDeletedMessage);
@@ -61,7 +63,7 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
 
   const send = useMutation({
     mutationFn: (body: string) => api<WAMessage>(`/whatsapp/conversations/${conversation._id}/messages`, { method: 'POST', body: JSON.stringify({ text: body }) }),
-    onSuccess: message => { qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => [...prev, message]); setText(''); setSuggestion(''); qc.invalidateQueries({ queryKey: ['wa-conversations'] }); },
+    onSuccess: message => { qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.some(existing => existing._id === message._id) ? prev : [...prev, message]); setText(''); setSuggestion(''); qc.invalidateQueries({ queryKey: ['wa-conversations'] }); },
   });
   const takeover = useMutation({ mutationFn: () => api(`/whatsapp/conversations/${conversation._id}/takeover`, { method: 'POST' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-conversations'] }) });
   const resumeAi = useMutation({ mutationFn: () => api(`/whatsapp/conversations/${conversation._id}/resume-ai`, { method: 'POST' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-conversations'] }) });

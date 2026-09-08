@@ -32,7 +32,7 @@ export default function WhatsApp() {
   const [composing, setComposing] = useState(false);
 
   const params = new URLSearchParams({ filter, search });
-  const conversations = useQuery({ queryKey: ['wa-conversations', filter, search], queryFn: () => api<Paged<WAConversation>>(`/whatsapp/conversations?${params.toString()}`), refetchInterval: 15000 });
+  const conversations = useQuery({ queryKey: ['wa-conversations', filter, search], queryFn: () => api<Paged<WAConversation>>(`/whatsapp/conversations?${params.toString()}`), refetchInterval: 5000, refetchIntervalInBackground: false, refetchOnWindowFocus: 'always' });
 
   useEffect(() => {
     const socket = getSocket();
@@ -44,7 +44,7 @@ export default function WhatsApp() {
   const list = conversations.data?.data ?? [];
   useEffect(() => { if (!selectedId && list.length) setSelectedId(list[0]!._id); }, [list, selectedId]);
   const selected = list.find(c => c._id === selectedId);
-  const detail = useQuery({ queryKey: ['wa-conversation', selectedId], queryFn: () => api<{ conversation: WAConversation }>(`/whatsapp/conversations/${selectedId}`), enabled: Boolean(selectedId) });
+  const detail = useQuery({ queryKey: ['wa-conversation', selectedId], queryFn: () => api<{ conversation: WAConversation }>(`/whatsapp/conversations/${selectedId}`), enabled: Boolean(selectedId), refetchInterval: 5000, refetchIntervalInBackground: false, refetchOnWindowFocus: 'always' });
   const active = detail.data?.conversation ?? selected;
 
   const canManage = user && ['Administrator', 'Sales Manager'].includes(user.role.name);

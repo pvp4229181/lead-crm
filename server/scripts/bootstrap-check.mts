@@ -119,6 +119,23 @@ const { deleteConversation, deleteMessage, listMeetings, deleteMeeting } = await
 const resStub = () => { const r: any = { code: 0, payload: null, status(c: number) { r.code = c; return r; }, end() { return r; }, json(data: any) { r.payload = data; return r; } }; return r; };
 const adminUser = { _id: user._id, role: { name: 'Administrator' } };
 
+// --- Three-state user access ------------------------------------------------
+const { updateUserAccess } = await import('../dist/controllers/admin.controller.js');
+const statusUser = await models.User.create({ name: 'Status User', email: 'status@test.local', password: 'x', role: role._id, active: true, accountStatus: 'active' });
+await updateUserAccess({ user: adminUser, params: { id: String(statusUser._id) }, body: { accountStatus: 'inactive' } } as any, resStub());
+const inactiveUser = await models.User.findById(statusUser._id);
+ok('user can be changed to inactive', inactiveUser?.accountStatus === 'inactive' && inactiveUser.active === false, inactiveUser);
+await updateUserAccess({ user: adminUser, params: { id: String(statusUser._id) }, body: { accountStatus: 'disabled' } } as any, resStub());
+const disabledUser = await models.User.findById(statusUser._id);
+ok('user can be disabled', disabledUser?.accountStatus === 'disabled' && disabledUser.active === false, disabledUser);
+await updateUserAccess({ user: adminUser, params: { id: String(statusUser._id) }, body: { accountStatus: 'active' } } as any, resStub());
+const reactivatedUser = await models.User.findById(statusUser._id);
+ok('user can be reactivated', reactivatedUser?.accountStatus === 'active' && reactivatedUser.active === true, reactivatedUser);
+let selfDeactivationDenied = false;
+try { await updateUserAccess({ user: adminUser, params: { id: String(user._id) }, body: { accountStatus: 'disabled' } } as any, resStub()); }
+catch (error: any) { selfDeactivationDenied = error?.status === 409; }
+ok('administrator cannot disable their own account', selfDeactivationDenied);
+
 // --- Listing and deleting a scheduled meeting ------------------------------
 const meetingType = await models.ActivityType.findOne({ name: 'Meeting' });
 const scheduledMeeting = await models.Activity.create({

@@ -9,7 +9,7 @@ export const requireAuth: RequestHandler = asyncHandler(async (req, _res, next) 
   if (!token) throw new ApiError(401, 'Authentication required');
   const payload = jwt.verify(token, process.env.JWT_SECRET!) as TokenPayload;
   const user = await User.findById(payload.sub).populate('role').select('+password');
-  if (!user?.active) throw new ApiError(401, 'Account unavailable');
+  if (!user?.active || user.accountStatus !== 'active') throw new ApiError(401, user?.accountStatus === 'disabled' ? 'Account disabled' : 'Account inactive');
   const role = user.role as unknown as { name?: string; active?: boolean };
   if (!role?.name || role.active === false) throw new ApiError(403, 'Your assigned role is unavailable');
   if (role.name === 'Sales Manager') {

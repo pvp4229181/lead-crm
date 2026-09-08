@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import { Role, User } from '../models/index.js';
 import { ApiError } from '../utils/http.js';
+import { disconnectUser } from '../realtime.js';
 
 const defaultRoles = [
   { name: 'Administrator', permissions: ['*'] },
@@ -53,7 +54,12 @@ export async function deleteRole(req: Request, res: Response) {
 }
 
 export async function listUsers(_req: Request, res: Response) {
-  res.json(await User.find({}).select('name email avatar role active createdAt').populate('role', 'name permissions').sort('name'));
+  // Backfill the explicit status for users created before the three-state model.
+  await Promise.all([
+    User.updateMany({ accountStatus: { $exists: false }, active: false }, { $set: { accountStatus: 'inactive' } }),
+    User.updateMany({ accountStatus: { $exists: false }, active: true }, { $set: { accountStatus: 'active' } }),
+  ]);
+  res.json(await User.find({}).select('name email avatar role active accountStatus createdAt').populate('role', 'name permissions').sort('name'));
 }
 
 export async function createUser(req: Request, res: Response) {
@@ -63,8 +69,8 @@ export async function createUser(req: Request, res: Response) {
   if (typeof password !== 'string' || password.length < 8) throw new ApiError(422, 'Temporary password must contain at least 8 characters');
   if (!mongoose.isValidObjectId(role) || !await Role.exists({ _id: role, active: true })) throw new ApiError(422, 'Select a valid role');
   if (await User.exists({ email: email.toLowerCase() })) throw new ApiError(409, 'A user with this email already exists');
-  const user = await User.create({ name: name.trim(), email: email.toLowerCase(), password: await bcrypt.hash(password, 12), role, active: true });
-  res.status(201).json(await User.findById(user._id).select('name email avatar role active createdAt').populate('role', 'name permissions'));
+  const user = await User.create({ name: name.trim(), email: email.toLowerCase(), password: await bcrypt.hash(password, 12), role, active: true, accountStatus: 'active' });
+  res.status(201).json(await User.findById(user._id).select('name email avatar role active accountStatus createdAt').populate('role', 'name permissions'));
 }
 
 export async function updateUserAccess(req: Request, res: Response) {
@@ -74,14 +80,20 @@ export async function updateUserAccess(req: Request, res: Response) {
     if ((target.role as unknown as { name?: string })?.name === 'Administrator') throw new ApiError(403, 'Only an Administrator can change an Administrator account');
     if (req.body.role && (await Role.findById(req.body.role))?.name === 'Administrator') throw new ApiError(403, 'Only an Administrator can grant the Administrator role');
   }
-  if (String(req.user!._id) === String(req.params.id) && (req.body.active === false || req.body.role)) throw new ApiError(409, 'You cannot suspend your own account or change your own role');
-  const update: { role?: string; active?: boolean } = {};
+  const requestedStatus = req.body.accountStatus ?? (req.body.active !== undefined ? (Boolean(req.body.active) ? 'active' : 'inactive') : undefined);
+  if (requestedStatus !== undefined && !['active', 'inactive', 'disabled'].includes(requestedStatus)) throw new ApiError(422, 'Select a valid user status');
+  if (String(req.user!._id) === String(req.params.id) && ((requestedStatus && requestedStatus !== 'active') || req.body.role)) throw new ApiError(409, 'You cannot deactivate your own account or change your own role');
+  const update: { role?: string; active?: boolean; accountStatus?: 'active' | 'inactive' | 'disabled' } = {};
   if (req.body.role !== undefined) {
     if (!mongoose.isValidObjectId(req.body.role) || !await Role.exists({ _id: req.body.role, active: true })) throw new ApiError(422, 'Select a valid role');
     update.role = req.body.role;
   }
-  if (req.body.active !== undefined) update.active = Boolean(req.body.active);
-  const user = await User.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true }).select('name email avatar role active createdAt').populate('role', 'name permissions');
+  if (requestedStatus !== undefined) {
+    update.accountStatus = requestedStatus;
+    update.active = requestedStatus === 'active';
+  }
+  const user = await User.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true }).select('name email avatar role active accountStatus createdAt').populate('role', 'name permissions');
   if (!user) throw new ApiError(404, 'User not found');
+  if (requestedStatus && requestedStatus !== 'active') disconnectUser(String(user._id));
   res.json(user);
 }
