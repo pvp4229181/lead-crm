@@ -6,9 +6,11 @@ import * as auth from '../controllers/auth.controller.js';
 import * as crm from '../controllers/crm.controller.js';
 import * as admin from '../controllers/admin.controller.js';
 import * as invitation from '../controllers/invitation.controller.js';
-import { Activity, Opportunity, TimelineEvent } from '../models/index.js';
+import { Activity, Company, Contact, Opportunity, TimelineEvent, WhatsAppConversation } from '../models/index.js';
+import { whatsappApi, whatsappWebhook } from './whatsapp.routes.js';
 
 export const api = Router();
+api.use(whatsappWebhook);
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 15, standardHeaders: true, legacyHeaders: false });
 const invitationLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false });
 api.post('/auth/login', loginLimiter, asyncHandler(auth.login));
@@ -18,6 +20,7 @@ api.post('/auth/invitations/:token/accept', invitationLimiter, asyncHandler(invi
 api.post('/auth/logout', auth.logout);
 api.get('/auth/me', requireAuth, auth.me);
 api.use(requireAuth);
+api.use(whatsappApi);
 api.get('/admin/roles', authorize('Administrator', 'Sales Manager'), asyncHandler(admin.listRoles));
 api.post('/admin/roles', authorize('Administrator'), asyncHandler(admin.createRole));
 api.patch('/admin/roles/:id', authorize('Administrator'), asyncHandler(admin.updateRole));
@@ -85,6 +88,33 @@ for (const [path, model] of Object.entries(crm.models) as [string, any][]) {
     res.status(204).end();
   }));
 }
+// DELETE /bulk/contacts | /bulk/companies — clear the whole address book in one go, for
+// wiping imported or seeded data. Irreversible, so it is Administrator-only and the client
+// makes the user type the resource name before it fires.
+// Mounted on its own /bulk prefix rather than /contacts/all so it can't be shadowed by the
+// generic /:id delete route registered in the loop above.
+const bulkDeletable: Record<string, { model: any; label: string; clear: { model: any; field: string }[] }> = {
+  contacts: { model: Contact, label: 'contact', clear: [{ model: Opportunity, field: 'contact' }, { model: WhatsAppConversation, field: 'contact' }] },
+  companies: { model: Company, label: 'company', clear: [{ model: Contact, field: 'company' }, { model: Opportunity, field: 'company' }] },
+};
+api.delete('/bulk/:resource', authorize('Administrator'), asyncHandler(async (req, res) => {
+  const target = bulkDeletable[String(req.params.resource)];
+  if (!target) throw new ApiError(404, 'That record type cannot be bulk deleted');
+
+  const total = await target.model.countDocuments({});
+  if (!total) return res.json({ deleted: 0, cleared: 0 });
+
+  // Unset the references first. Deleting the documents while opportunities and conversations
+  // still point at them would leave ids that populate to null and render as blank names.
+  let cleared = 0;
+  for (const reference of target.clear) {
+    const outcome = await reference.model.updateMany({ [reference.field]: { $ne: null } }, { $unset: { [reference.field]: '' } });
+    cleared += outcome.modifiedCount ?? 0;
+  }
+  const outcome = await target.model.deleteMany({});
+  res.json({ deleted: outcome.deletedCount ?? 0, cleared });
+}));
+
 api.post('/notifications/read-all', asyncHandler(async (req, res) => {
   await crm.models.notifications.updateMany({ user: req.user!._id, read: false }, { read: true });
   res.json({ success: true });

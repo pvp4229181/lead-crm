@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { NavLink, useLocation } from 'react-router-dom';
-import { AppWindow, BarChart3, Bell, CalendarDays, Check, ChevronDown, ClipboardCheck, ContactRound, Gauge, KanbanSquare, Menu, Search, Settings, Star, UsersRound, X } from 'lucide-react';
+import { AppWindow, BarChart3, Bell, CalendarDays, Check, ChevronDown, ClipboardCheck, ContactRound, Gauge, KanbanSquare, MessageCircle, Menu, Search, Settings, Star, UsersRound, X } from 'lucide-react';
 import { useAuth } from '../context/Auth';
 import { api } from '../lib/api';
 import { Avatar } from './ui';
 
-const nav = [['Dashboard','/',Gauge],['Pipeline','/pipeline',KanbanSquare],['Leads','/leads',ContactRound],['Activities','/activities',ClipboardCheck],['Calendar','/calendar',CalendarDays],['Contacts','/contacts',UsersRound],['Reporting','/reporting',BarChart3],['Configuration','/configuration',Settings]] as const;
+const nav = [['Dashboard','/',Gauge],['Pipeline','/pipeline',KanbanSquare],['Leads','/leads',ContactRound],['WhatsApp','/whatsapp',MessageCircle],['Activities','/activities',ClipboardCheck],['Calendar','/calendar',CalendarDays],['Contacts','/contacts',UsersRound],['Reporting','/reporting',BarChart3],['Configuration','/configuration',Settings]] as const;
 
 export function Shell({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(false); const [userMenu, setUserMenu] = useState(false); const { user, logout } = useAuth();

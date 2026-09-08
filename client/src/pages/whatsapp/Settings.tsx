@@ -1,0 +1,168 @@
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Plus, Trash2 } from 'lucide-react';
+import { api } from '../../lib/api';
+import type { AIConfig, WATemplate, WhatsAppAccountRow } from '../../lib/types';
+import { PageHeader } from '../../components/Shell';
+import { Button, Empty, Loading, RowMenu } from '../../components/ui';
+import Knowledge from './Knowledge';
+import { Templates, Campaigns } from './TemplatesCampaigns';
+
+const TABS = ['AI Agent', 'Knowledge Base', 'Templates', 'Campaigns', 'Accounts'] as const;
+
+export default function WhatsAppSettings() {
+  const [tab, setTab] = useState<typeof TABS[number]>('AI Agent');
+  return <>
+    <PageHeader title="WhatsApp AI Agent" subtitle="Configure how the AI sales agent behaves, what it knows, and who it hands off to." />
+    <div className="border-b bg-white px-4"><nav className="flex gap-1">{TABS.map(t => <button key={t} className={`border-b-2 px-3 py-2.5 text-xs font-semibold ${tab === t ? 'border-[#0ea5e9] text-[#0284c7]' : 'border-transparent text-slate-500 hover:text-slate-800'}`} onClick={() => setTab(t)}>{t}</button>)}</nav></div>
+    <div className="p-4">
+      {tab === 'AI Agent' && <AgentConfig />}
+      {tab === 'Knowledge Base' && <Knowledge />}
+      {tab === 'Templates' && <Templates />}
+      {tab === 'Campaigns' && <Campaigns />}
+      {tab === 'Accounts' && <Accounts />}
+    </div>
+  </>;
+}
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function AgentConfig() {
+  const qc = useQueryClient();
+  const config = useQuery({ queryKey: ['wa-ai-settings'], queryFn: () => api<AIConfig>('/whatsapp/ai-settings') });
+  const templates = useQuery({ queryKey: ['wa-templates'], queryFn: () => api<WATemplate[]>('/whatsapp/templates') });
+  const approvedTemplates = (templates.data ?? []).filter(t => t.status === 'APPROVED');
+  const [form, setForm] = useState<AIConfig | null>(null);
+  const [question, setQuestion] = useState('');
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { if (config.data && !form) setForm(config.data); }, [config.data, form]);
+
+  const save = useMutation({
+    mutationFn: (body: Partial<AIConfig>) => api<AIConfig>('/whatsapp/ai-settings', { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: data => { setForm(data); qc.setQueryData(['wa-ai-settings'], data); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+  });
+
+  if (config.isLoading || !form) return <Loading />;
+  const set = <K extends keyof AIConfig>(key: K, value: AIConfig[K]) => setForm({ ...form, [key]: value });
+  const days = form.businessHours?.days ?? [];
+  const dayFor = (d: number) => days.find(x => x.day === d);
+  const setDay = (d: number, patch: Partial<{ enabled: boolean; start: string; end: string }>) => {
+    const existing = dayFor(d);
+    const next = existing ? { ...existing, ...patch } : { day: d, start: '09:30', end: '18:30', enabled: true, ...patch };
+    const nextDays = [...days.filter(x => x.day !== d), next].sort((a, b) => a.day - b.day);
+    set('businessHours', { timezone: form.businessHours?.timezone ?? 'Asia/Kolkata', days: nextDays });
+  };
+  const rules = form.escalationRules;
+  const setRule = (key: keyof AIConfig['escalationRules'], value: unknown) => set('escalationRules', { ...rules, [key]: value });
+
+  return <div className="max-w-3xl space-y-5">
+    <section className="panel space-y-3 p-4">
+      <h3 className="text-sm font-semibold">Identity</h3>
+      <div className="grid grid-cols-2 gap-3">
+        <label><span className="label">Agent name</span><input className="field" value={form.agentName} onChange={e => set('agentName', e.target.value)} /></label>
+        <label><span className="label">Agent role</span><input className="field" value={form.agentRole} onChange={e => set('agentRole', e.target.value)} /></label>
+        <label><span className="label">Company name</span><input className="field" value={form.companyName} onChange={e => set('companyName', e.target.value)} /></label>
+        <label><span className="label">Tone</span><select className="field" value={form.tone} onChange={e => set('tone', e.target.value as AIConfig['tone'])}><option>Professional</option><option>Friendly</option><option>Casual</option><option>Sales-focused</option><option>Custom</option></select></label>
+      </div>
+      {form.tone === 'Custom' && <label><span className="label">Custom tone instructions</span><input className="field" value={form.customTone ?? ''} onChange={e => set('customTone', e.target.value)} /></label>}
+      <label><span className="label">Company description</span><textarea className="field" rows={2} value={form.companyDescription ?? ''} onChange={e => set('companyDescription', e.target.value)} /></label>
+      <label><span className="label">Welcome message</span><textarea className="field" rows={2} value={form.welcomeMessage} onChange={e => set('welcomeMessage', e.target.value)} /></label>
+      <label><span className="label">Default language</span><select className="field" value={form.language} onChange={e => set('language', e.target.value as AIConfig['language'])}><option value="auto">Auto-detect (English / Hindi / Hinglish)</option><option value="en">English</option><option value="hi">Hindi</option><option value="hinglish">Hinglish</option></select></label>
+    </section>
+
+    <section className="panel space-y-3 p-4">
+      <h3 className="text-sm font-semibold">Qualification questions</h3>
+      <p className="text-xs text-slate-500">Asked naturally, one at a time — never all at once.</p>
+      {form.qualificationQuestions.map((q, i) => <div key={i} className="flex items-center gap-2"><input className="field flex-1" value={q} onChange={e => set('qualificationQuestions', form.qualificationQuestions.map((x, j) => (j === i ? e.target.value : x)))} /><button className="text-slate-400 hover:text-red-600" onClick={() => set('qualificationQuestions', form.qualificationQuestions.filter((_, j) => j !== i))}><Trash2 size={14} /></button></div>)}
+      <div className="flex gap-2"><input className="field flex-1" placeholder="Add a question…" value={question} onChange={e => setQuestion(e.target.value)} /><Button onClick={() => { if (question.trim()) { set('qualificationQuestions', [...form.qualificationQuestions, question.trim()]); setQuestion(''); } }}><Plus size={14} />Add</Button></div>
+    </section>
+
+    <section className="panel space-y-3 p-4">
+      <h3 className="text-sm font-semibold">Business hours</h3>
+      <label className="block max-w-xs"><span className="label">Timezone</span><input className="field" value={form.businessHours?.timezone ?? 'Asia/Kolkata'} onChange={e => set('businessHours', { timezone: e.target.value, days })} /></label>
+      <div className="space-y-1">{DAY_LABELS.map((label, d) => { const day = dayFor(d); return <div key={d} className="flex items-center gap-3 text-xs">
+        <label className="flex w-20 items-center gap-1.5"><input type="checkbox" checked={day?.enabled ?? false} onChange={e => setDay(d, { enabled: e.target.checked })} />{label}</label>
+        <input type="time" className="field h-8 w-28" disabled={!day?.enabled} value={day?.start ?? '09:30'} onChange={e => setDay(d, { start: e.target.value })} />
+        <span>to</span>
+        <input type="time" className="field h-8 w-28" disabled={!day?.enabled} value={day?.end ?? '18:30'} onChange={e => setDay(d, { end: e.target.value })} />
+      </div>; })}</div>
+      <label className="block"><span className="label">Outside-business-hours message</span><textarea className="field" rows={2} value={form.outsideHoursMessage} onChange={e => set('outsideHoursMessage', e.target.value)} /></label>
+    </section>
+
+    <section className="panel space-y-3 p-4">
+      <h3 className="text-sm font-semibold">Auto-greet new CRM leads</h3>
+      <p className="text-xs text-slate-500">When a lead with a phone number is created in the CRM, WhatsApp them automatically. WhatsApp only allows business-initiated messages via an <b>approved template</b>; the service list with links is sent right after they reply, once the 24-hour window opens.</p>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.autoGreetNewLeads === true} onChange={e => set('autoGreetNewLeads', e.target.checked)} />Send a WhatsApp greeting when a lead is added</label>
+      <label className="block"><span className="label">Greeting template (must be approved)</span>
+        <select className="field" value={form.autoGreetTemplate ?? ''} onChange={e => set('autoGreetTemplate', e.target.value)}>
+          <option value="">— Select a template —</option>
+          {approvedTemplates.map(t => <option key={t._id} value={t._id}>{t.templateName} ({t.language})</option>)}
+        </select>
+        {form.autoGreetNewLeads && !form.autoGreetTemplate && <span className="mt-1 block text-[11px] text-amber-600">Pick a template, or nothing will be sent.</span>}
+        {!approvedTemplates.length && <span className="mt-1 block text-[11px] text-amber-600">No approved templates yet — add one on the Templates tab and mark it approved.</span>}
+      </label>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.sendServiceListOnReply !== false} onChange={e => set('sendServiceListOnReply', e.target.checked)} />Send the service list when they reply</label>
+      <label className="block"><span className="label">Service list intro</span><input className="field" value={form.serviceListIntro ?? ''} onChange={e => set('serviceListIntro', e.target.value)} placeholder="Here's a quick look at what we offer:" /></label>
+      <p className="text-[11px] text-slate-400">The list is built from your Knowledge Base products and services — add a link to each one there and it appears here.</p>
+    </section>
+
+    <section className="panel space-y-3 p-4">
+      <h3 className="text-sm font-semibold">Customer choice (WhatsApp buttons)</h3>
+      <p className="text-xs text-slate-500">Lets the customer pick AI or a human from buttons in their own WhatsApp, instead of the AI having to infer it from their wording.</p>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.welcomeMenuEnabled !== false} onChange={e => set('welcomeMenuEnabled', e.target.checked)} />Send a welcome menu on the first message</label>
+      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.humanHandoffButtonEnabled !== false} onChange={e => set('humanHandoffButtonEnabled', e.target.checked)} />Include a “talk to a human” button</label>
+      <div className="grid grid-cols-2 gap-3">
+        {([['question', 'Question button'], ['pricing', 'Pricing button'], ['human', 'Human button'], ['ai', 'Back-to-AI button']] as const).map(([key, label]) =>
+          <label key={key}><span className="label">{label}</span>
+            <input className="field" maxLength={20} value={form.menuButtonLabels?.[key] ?? ''} placeholder={key === 'question' ? 'Ask a question' : key === 'pricing' ? 'Pricing' : key === 'human' ? 'Talk to a human' : 'Back to AI'}
+              onChange={e => set('menuButtonLabels', { ...form.menuButtonLabels, [key]: e.target.value })} />
+          </label>)}
+      </div>
+      <p className="text-[11px] text-slate-400">WhatsApp caps button labels at 20 characters and allows 3 buttons per message.</p>
+      <label className="block"><span className="label">Message when a human is requested</span><textarea className="field" rows={2} value={form.humanRequestedMessage ?? ''} onChange={e => set('humanRequestedMessage', e.target.value)} /></label>
+      <label className="block"><span className="label">Message when the AI resumes</span><textarea className="field" rows={2} value={form.aiResumedMessage ?? ''} onChange={e => set('aiResumedMessage', e.target.value)} /></label>
+    </section>
+
+    <section className="panel space-y-3 p-4">
+      <h3 className="text-sm font-semibold">Model & behavior</h3>
+      <div className="grid grid-cols-2 gap-3">
+        <label><span className="label">Provider</span><select className="field" value={form.provider} onChange={e => set('provider', e.target.value as AIConfig['provider'])}><option value="mock">Mock (no API key needed)</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option></select></label>
+        <label><span className="label">Model (optional override)</span><input className="field" placeholder="e.g. claude-sonnet-5" value={form.aiModel ?? ''} onChange={e => set('aiModel', e.target.value)} /></label>
+        <label><span className="label">Creativity ({form.creativity.toFixed(2)})</span><input type="range" min={0} max={1} step={0.05} className="w-full" value={form.creativity} onChange={e => set('creativity', Number(e.target.value))} /></label>
+        <label><span className="label">Max response length (chars)</span><input type="number" className="field" value={form.maxResponseLength} onChange={e => set('maxResponseLength', Number(e.target.value))} /></label>
+        <label><span className="label">Max AI messages before escalation</span><input type="number" className="field" value={form.maxAiMessagesBeforeEscalation} onChange={e => set('maxAiMessagesBeforeEscalation', Number(e.target.value))} /></label>
+      </div>
+      <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={form.globalAiEnabled} onChange={e => set('globalAiEnabled', e.target.checked)} />Global AI Auto-Reply ON</label>
+    </section>
+
+    <section className="panel space-y-2 p-4">
+      <h3 className="text-sm font-semibold">Human escalation rules</h3>
+      {[['onHumanRequest', 'Customer explicitly asks for a human'], ['onNegativeSentiment', 'Customer sentiment turns negative'], ['onSeriousComplaint', 'Customer reports a serious complaint'], ['onComplexPricing', 'Complex pricing negotiation is detected'], ['onVipLead', 'High-value / VIP lead is detected'], ['onLowConfidence', 'AI confidence is too low to continue safely']].map(([key, label]) => <label key={key} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={Boolean(rules[key as keyof typeof rules])} onChange={e => setRule(key as keyof typeof rules, e.target.checked)} />{label}</label>)}
+      <div className="grid grid-cols-2 gap-3 pt-2">
+        <label><span className="label">VIP lead score threshold</span><input type="number" className="field" value={rules.vipLeadScoreThreshold} onChange={e => setRule('vipLeadScoreThreshold', Number(e.target.value))} /></label>
+        <label><span className="label">Low confidence threshold</span><input type="number" step={0.05} className="field" value={rules.lowConfidenceThreshold} onChange={e => setRule('lowConfidenceThreshold', Number(e.target.value))} /></label>
+      </div>
+    </section>
+
+    <div className="flex items-center gap-3"><Button className="btn-primary" disabled={save.isPending} onClick={() => save.mutate(form)}>{save.isPending ? 'Saving…' : 'Save settings'}</Button>{saved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}</div>
+  </div>;
+}
+
+function Accounts() {
+  const qc = useQueryClient();
+  const accounts = useQuery({ queryKey: ['wa-accounts'], queryFn: () => api<WhatsAppAccountRow[]>('/whatsapp/accounts') });
+  const [form, setForm] = useState({ label: '', phoneNumberId: '', businessAccountId: '', displayPhoneNumber: '' });
+  const [error, setError] = useState('');
+  const create = useMutation({ mutationFn: () => api('/whatsapp/accounts', { method: 'POST', body: JSON.stringify(form) }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['wa-accounts'] }); setForm({ label: '', phoneNumberId: '', businessAccountId: '', displayPhoneNumber: '' }); }, onError: (e: any) => setError(e?.message ?? 'Could not save.') });
+  const remove = useMutation({ mutationFn: (id: string) => api(`/whatsapp/accounts/${id}`, { method: 'DELETE' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-accounts'] }) });
+
+  return <div className="max-w-2xl space-y-4">
+    <div className="rounded border border-sky-100 bg-sky-50 p-3 text-xs text-sky-900">The live access token is read from the <code>WHATSAPP_ACCESS_TOKEN</code> server environment variable, never stored here or sent to the browser. This list is for tracking which Meta phone numbers are connected.</div>
+    <div className="panel space-y-2 p-4">
+      <div className="grid grid-cols-2 gap-2"><input className="field" placeholder="Label" value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} /><input className="field" placeholder="Display phone number" value={form.displayPhoneNumber} onChange={e => setForm({ ...form, displayPhoneNumber: e.target.value })} /><input className="field" placeholder="Phone Number ID" value={form.phoneNumberId} onChange={e => setForm({ ...form, phoneNumberId: e.target.value })} /><input className="field" placeholder="Business Account ID" value={form.businessAccountId} onChange={e => setForm({ ...form, businessAccountId: e.target.value })} /></div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <Button className="btn-primary h-8" disabled={create.isPending || !form.label || !form.phoneNumberId} onClick={() => create.mutate()}><Plus size={14} />Add account</Button>
+    </div>
+    {accounts.isLoading ? <Loading /> : !accounts.data?.length ? <Empty title="No accounts registered" detail="Add the WhatsApp Business phone number connected via WHATSAPP_PHONE_NUMBER_ID." /> : <div className="panel divide-y">{accounts.data.map(a => <div key={a._id} className="flex items-center gap-3 p-3 text-sm"><div className="flex-1"><b>{a.label}</b> <span className="text-xs text-slate-400">{a.displayPhoneNumber}</span></div><RowMenu busy={remove.isPending} onDelete={() => confirm('Remove this account?') && remove.mutate(a._id)} /></div>)}</div>}
+  </div>;
+}

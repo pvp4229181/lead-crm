@@ -1,11 +1,11 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3 } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api, date } from '../lib/api';
 import type { Activity } from '../lib/types';
 import { PageHeader, SearchToolbar, type ToolbarState } from '../components/Shell';
-import { Avatar, Empty, Loading, RowMenu } from '../components/ui';
+import { Avatar, Button, Empty, Loading, Modal, RowMenu } from '../components/ui';
 
 export function Activities(){
   const [search,setSearch]=useState('');
@@ -42,7 +42,7 @@ export function Activities(){
     :[['',data]];
   if(query.isLoading)return <Loading/>;
   if(query.isError)return <PageError message={query.error.message}/>;
-  return <><PageHeader title="Activities"/><SearchToolbar value={search} onChange={setSearch} resource="activities" state={toolbar} onState={setToolbar} filterGroups={filterGroups} groupOptions={[{value:'state',label:'Status'},{value:'assignedTo',label:'Assigned to'},{value:'activityType',label:'Type'},{value:'relatedModel',label:'Related to'},{value:'dueDate',label:'Due date'}]}/>{error&&<div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{error}</div>}<div className="p-4"><div className="panel overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs"><thead className="border-b bg-slate-50"><tr>{['Activity','Type','Due date','Assigned to','Related to','Status'].map(label=><th className="p-3" key={label}>{label}</th>)}<th/></tr></thead><tbody>{groups.map(([groupName,rows])=><Fragment key={groupName}>{groupName&&<tr className="bg-slate-100"><td className="px-3 py-1.5 text-[11px] font-semibold text-slate-600" colSpan={7}>{groupName} ({rows.length})</td></tr>}{rows.map(activity=>{const overdue=new Date(activity.dueDate)<new Date()&&activity.status!=='completed';return <tr className="border-b hover:bg-slate-50" key={activity._id}><td className="p-3 font-semibold">{activity.summary}</td><td className="p-3">{activity.activityType?.name??'Activity'}</td><td className={`p-3 ${overdue?'text-red-600':''}`}>{date(activity.dueDate)}</td><td className="p-3"><span className="flex items-center gap-2"><Avatar name={activity.assignedTo?.name}/>{activity.assignedTo?.name??'Unassigned'}</span></td><td className="p-3">{activity.relatedModel}</td><td className="p-3"><span className={`badge ${activity.status==='completed'?'bg-emerald-100 text-emerald-700':overdue?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{activity.status==='completed'?'Completed':overdue?'Overdue':'Planned'}</span></td><td className="p-3 text-right"><RowMenu label="Delete activity" busy={remove.isPending} onDelete={()=>{if(confirm('Delete this activity? This cannot be undone.'))remove.mutate(activity._id)}}/></td></tr>})}</Fragment>)}</tbody></table>{!data.length&&<Empty title="No activities" detail="There are no matching scheduled activities."/>}</div></div></>;
+  return <><PageHeader title="Activities"/><SearchToolbar value={search} onChange={setSearch} resource="activities" state={toolbar} onState={setToolbar} filterGroups={filterGroups} groupOptions={[{value:'state',label:'Status'},{value:'assignedTo',label:'Assigned to'},{value:'activityType',label:'Type'},{value:'relatedModel',label:'Related to'},{value:'dueDate',label:'Due date'}]}/>{error&&<div className={`border-b px-4 py-2 text-xs ${error.startsWith('Deleted')||error==='Nothing to delete.'?'border-emerald-200 bg-emerald-50 text-emerald-700':'border-red-200 bg-red-50 text-red-700'}`}>{error}</div>}<div className="p-4"><div className="panel overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs"><thead className="border-b bg-slate-50"><tr>{['Activity','Type','Due date','Assigned to','Related to','Status'].map(label=><th className="p-3" key={label}>{label}</th>)}<th/></tr></thead><tbody>{groups.map(([groupName,rows])=><Fragment key={groupName}>{groupName&&<tr className="bg-slate-100"><td className="px-3 py-1.5 text-[11px] font-semibold text-slate-600" colSpan={7}>{groupName} ({rows.length})</td></tr>}{rows.map(activity=>{const overdue=new Date(activity.dueDate)<new Date()&&activity.status!=='completed';return <tr className="border-b hover:bg-slate-50" key={activity._id}><td className="p-3 font-semibold">{activity.summary}</td><td className="p-3">{activity.activityType?.name??'Activity'}</td><td className={`p-3 ${overdue?'text-red-600':''}`}>{date(activity.dueDate)}</td><td className="p-3"><span className="flex items-center gap-2"><Avatar name={activity.assignedTo?.name}/>{activity.assignedTo?.name??'Unassigned'}</span></td><td className="p-3">{activity.relatedModel}</td><td className="p-3"><span className={`badge ${activity.status==='completed'?'bg-emerald-100 text-emerald-700':overdue?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{activity.status==='completed'?'Completed':overdue?'Overdue':'Planned'}</span></td><td className="p-3 text-right"><RowMenu label="Delete activity" busy={remove.isPending} onDelete={()=>{if(confirm('Delete this activity? This cannot be undone.'))remove.mutate(activity._id)}}/></td></tr>})}</Fragment>)}</tbody></table>{!data.length&&<Empty title="No activities" detail="There are no matching scheduled activities."/>}</div></div></>;
 }
 
 type CalendarMode='Month'|'Week'|'Day';
@@ -150,7 +150,37 @@ export function Contacts(){
   const [error,setError]=useState('');
   const queryClient=useQueryClient();
   const remove=useMutation({mutationFn:(id:string)=>api(`/${tab}/${id}`,{method:'DELETE'}),onMutate:()=>setError(''),onSuccess:()=>queryClient.invalidateQueries({queryKey:[tab]}),onError:(cause:any)=>setError(cause?.message??`Could not delete this ${tab==='contacts'?'contact':'company'}.`)});
-  return <><PageHeader title="Contacts & Companies"><div className="flex"><button className={`btn ${tab==='contacts'?'bg-slate-100':''}`} onClick={()=>setTab('contacts')}>Contacts</button><button className={`btn ${tab==='companies'?'bg-slate-100':''}`} onClick={()=>setTab('companies')}>Companies</button></div></PageHeader>{error&&<div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{error}</div>}{query.isLoading?<Loading/>:query.isError?<PageError message={query.error.message}/>:<div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{query.data?.map(record=><div className="panel flex gap-3 p-4" key={record._id}><Avatar name={record.name} size={38}/><div className="min-w-0"><b className="block truncate text-sm">{record.name}</b><div className="mt-1 truncate text-xs text-slate-500">{[record.jobPosition||record.industry,record.company?.name].filter(Boolean).join(' · ')||'—'}</div><div className="truncate text-xs text-slate-400">{record.email}</div></div><div className="ml-auto"><RowMenu label={tab==='contacts'?'Delete contact':'Delete company'} busy={remove.isPending} onDelete={()=>{if(confirm(`Delete ${record.name}? This cannot be undone.`))remove.mutate(record._id)}}/></div></div>)}</div>}</>;
+  const [wiping,setWiping]=useState(false);
+  const count=query.data?.length??0;
+  // Bulk delete is irreversible and unscoped, so it is kept behind its own confirmation
+  // dialog rather than the one-click RowMenu used for a single record.
+  const wipe=useMutation({
+    mutationFn:()=>api<{deleted:number;cleared:number}>(`/bulk/${tab}`,{method:'DELETE'}),
+    onMutate:()=>setError(''),
+    onSuccess:result=>{setWiping(false);queryClient.invalidateQueries();setError(result.deleted?`Deleted ${result.deleted} ${result.deleted===1?'record':'records'}.${result.cleared?` Cleared ${result.cleared} linked reference${result.cleared===1?'':'s'}.`:''}`:'Nothing to delete.');},
+    onError:(cause:any)=>{setWiping(false);setError(cause?.message??'Could not delete these records.');},
+  });
+  return <><PageHeader title="Contacts & Companies"><div className="flex items-center gap-2"><div className="flex"><button className={`btn ${tab==='contacts'?'bg-slate-100':''}`} onClick={()=>setTab('contacts')}>Contacts</button><button className={`btn ${tab==='companies'?'bg-slate-100':''}`} onClick={()=>setTab('companies')}>Companies</button></div><Button className="btn text-red-600 hover:bg-red-50 disabled:opacity-40" disabled={!count} onClick={()=>setWiping(true)}><Trash2 size={14}/>Delete all {tab==='contacts'?'contacts':'companies'}</Button></div></PageHeader>{wiping&&<WipeDialog resource={tab} count={count} busy={wipe.isPending} onClose={()=>setWiping(false)} onConfirm={()=>wipe.mutate()}/>}{error&&<div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{error}</div>}{query.isLoading?<Loading/>:query.isError?<PageError message={query.error.message}/>:<div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{query.data?.map(record=><div className="panel flex gap-3 p-4" key={record._id}><Avatar name={record.name} size={38}/><div className="min-w-0"><b className="block truncate text-sm">{record.name}</b><div className="mt-1 truncate text-xs text-slate-500">{[record.jobPosition||record.industry,record.company?.name].filter(Boolean).join(' · ')||'—'}</div><div className="truncate text-xs text-slate-400">{record.email}</div></div><div className="ml-auto"><RowMenu label={tab==='contacts'?'Delete contact':'Delete company'} busy={remove.isPending} onDelete={()=>{if(confirm(`Delete ${record.name}? This cannot be undone.`))remove.mutate(record._id)}}/></div></div>)}</div>}</>;
 }
 
 function PageError({message}:{message:string}){return <div className="p-4"><div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700"><b>Unable to load this page.</b><p className="mt-1 text-xs">{message}</p></div></div>}
+
+// Typing the resource name is deliberate friction: this wipes every record of the type and
+// cannot be undone, unlike the per-record delete beside it.
+function WipeDialog({resource,count,busy,onClose,onConfirm}:{resource:'contacts'|'companies';count:number;busy:boolean;onClose:()=>void;onConfirm:()=>void}){
+  const [typed,setTyped]=useState('');
+  const linked=resource==='contacts'?'opportunities and WhatsApp conversations':'contacts and opportunities';
+  return <Modal title={`Delete all ${resource}?`} onClose={onClose} width="max-w-md">
+    <div className="space-y-3 p-5 text-sm">
+      <p>This permanently deletes <b>all {count} {resource}</b>. It cannot be undone.</p>
+      <p className="text-xs text-slate-500">Any {linked} still linked to them will have that link cleared, so they stay intact but lose the reference.</p>
+      <label className="block"><span className="label">Type <b>{resource}</b> to confirm</span>
+        <input autoFocus className="field" value={typed} onChange={e=>setTyped(e.target.value)} placeholder={resource}/>
+      </label>
+    </div>
+    <div className="flex justify-end gap-2 border-t bg-slate-50 p-3">
+      <Button type="button" onClick={onClose}>Cancel</Button>
+      <Button className="btn bg-red-600 text-white hover:bg-red-700 disabled:opacity-40" disabled={typed.trim()!==resource||busy} onClick={onConfirm}>{busy?'Deleting…':`Delete all ${resource}`}</Button>
+    </div>
+  </Modal>;
+}

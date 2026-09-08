@@ -7,9 +7,13 @@
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx src/seed/index.ts"
+    "seed": "tsx src/seed/index.ts",
+    "smoke": "tsc -p tsconfig.json && tsx scripts/smoke.mts",
+    "bootstrap-check": "tsc -p tsconfig.json && tsx scripts/bootstrap-check.mts",
+    "ai-check": "tsc -p tsconfig.json && tsx scripts/ai-check.mts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -20,7 +24,10 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.4",
     "morgan": "^1.10.0",
-    "nodemailer": "^10.0.1",
+    "node-cron": "^3.0.3",
+    "openai": "^4.77.0",
+    "resend": "^4.0.1",
+    "socket.io": "^4.8.1",
     "zod": "^4.0.5"
   },
   "devDependencies": {
@@ -29,7 +36,8 @@
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.10",
-    "@types/nodemailer": "^8.0.1",
+    "@types/node-cron": "^3.0.11",
+    "mongodb-memory-server": "^11.2.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   }
