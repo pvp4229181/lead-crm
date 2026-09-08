@@ -123,13 +123,26 @@ ok('greeting message stored as a template message', (await models.WhatsAppMessag
 ok('lead is never greeted twice', (await greetNewLead(greetLead._id)) === null);
 
 // --- Deleting a chat ---------------------------------------------------------
-const { deleteConversation, deleteMessage, listMeetings, deleteMeeting } = await import('../dist/controllers/whatsapp.controller.js');
+const { deleteConversation, deleteMessage, listMeetings, deleteMeeting, takeover, resumeAi } = await import('../dist/controllers/whatsapp.controller.js');
 const resStub = () => { const r: any = { code: 0, payload: null, status(c: number) { r.code = c; return r; }, end() { return r; }, json(data: any) { r.payload = data; return r; } }; return r; };
 const adminUser = { _id: user._id, role: { name: 'Administrator' } };
 
 // --- Suspending and deleting a user -----------------------------------------
-const { updateUserAccess, deleteUser } = await import('../dist/controllers/admin.controller.js');
+const { updateUserAccess, deleteUser, listUsers } = await import('../dist/controllers/admin.controller.js');
+const userListRes = resStub();
+await listUsers({ user: adminUser } as any, userListRes);
+const systemAgent = userListRes.payload?.find((listed: any) => listed.email === 'whatsapp-ai@system.local');
+ok('WhatsApp AI Agent appears in the users list', systemAgent?.isSystem === true && systemAgent?.role?.name === 'AI Agent', systemAgent);
+let systemAgentProtected = false;
+try { await updateUserAccess({ user: adminUser, params: { id: String(systemAgent?._id) }, body: { active: true } } as any, resStub()); }
+catch (error: any) { systemAgentProtected = error?.status === 409; }
+ok('WhatsApp AI Agent cannot be edited', systemAgentProtected);
 const removableUser = await models.User.create({ name: 'Remove Me', email: 'remove@test.local', password: 'x', role: role._id, active: true });
+const aiAgentRole = await models.Role.findOne({ name: 'AI Agent' });
+let aiRoleAssignmentDenied = false;
+try { await updateUserAccess({ user: adminUser, params: { id: String(removableUser._id) }, body: { role: String(aiAgentRole?._id) } } as any, resStub()); }
+catch (error: any) { aiRoleAssignmentDenied = error?.status === 409; }
+ok('AI Agent role cannot be assigned to a human user', aiRoleAssignmentDenied);
 await updateUserAccess({ user: adminUser, params: { id: String(removableUser._id) }, body: { active: false } } as any, resStub());
 ok('user can be suspended', (await models.User.findById(removableUser._id))?.active === false);
 await updateUserAccess({ user: adminUser, params: { id: String(removableUser._id) }, body: { active: true } } as any, resStub());
@@ -156,6 +169,18 @@ let selfDeletionDenied = false;
 try { await deleteUser({ user: adminUser, params: { id: String(user._id) } } as any, resStub()); }
 catch (error: any) { selfDeletionDenied = error?.status === 409; }
 ok('administrator cannot delete their own account', selfDeletionDenied);
+
+// --- Switching between human and AI control --------------------------------
+const takeoverRes = resStub();
+await takeover({ user: adminUser, params: { id: String(gConv!._id) } } as any, takeoverRes);
+ok('AI mode switches directly to human mode', takeoverRes.payload?.controlStatus === 'HUMAN_ACTIVE' && takeoverRes.payload?.aiEnabled === false, takeoverRes.payload);
+const resumeRes = resStub();
+await resumeAi({ user: adminUser, params: { id: String(gConv!._id) } } as any, resumeRes);
+ok('human mode switches directly back to AI mode', resumeRes.payload?.controlStatus === 'AI_ACTIVE' && resumeRes.payload?.aiEnabled === true, resumeRes.payload);
+await models.WhatsAppConversation.updateOne({ _id: gConv!._id }, { controlStatus: 'WAITING_HUMAN', aiEnabled: false });
+const waitingResumeRes = resStub();
+await resumeAi({ user: adminUser, params: { id: String(gConv!._id) } } as any, waitingResumeRes);
+ok('waiting-for-human state can switch directly to AI', waitingResumeRes.payload?.controlStatus === 'AI_ACTIVE' && waitingResumeRes.payload?.aiEnabled === true, waitingResumeRes.payload);
 
 // --- Listing and deleting a scheduled meeting ------------------------------
 const meetingType = await models.ActivityType.findOne({ name: 'Meeting' });

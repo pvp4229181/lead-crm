@@ -24,6 +24,7 @@ export async function createInvitation(req: Request, res: Response) {
   if (!mongoose.isValidObjectId(roleId)) throw new ApiError(422, 'Select a valid role');
   const role = await Role.findOne({ _id: roleId, active: true });
   if (!role) throw new ApiError(422, 'Select a valid role');
+  if (role.name === 'AI Agent') throw new ApiError(409, 'The AI Agent role is reserved for WhatsApp automation');
   if (await User.exists({ email })) throw new ApiError(409, 'A user with this email already exists');
   await UserInvitation.updateMany({ email, status: 'pending' }, { status: 'revoked' });
   const token = newToken(); const expiresAt = expiry();

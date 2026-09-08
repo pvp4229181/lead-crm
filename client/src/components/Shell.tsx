@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { NavLink, useLocation } from 'react-router-dom';
-import { BarChart3, Bell, CalendarDays, Check, ChevronDown, ClipboardCheck, ContactRound, Gauge, KanbanSquare, LogOut, MessageCircle, Menu, Search, Settings, Star, UsersRound, X } from 'lucide-react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { ArrowLeft, BarChart3, Bell, CalendarDays, Check, ChevronDown, ClipboardCheck, ContactRound, Gauge, KanbanSquare, LogOut, MessageCircle, Menu, Search, Settings, Star, UsersRound, X } from 'lucide-react';
 import { useAuth } from '../context/Auth';
 import { api } from '../lib/api';
 import { useHotkey, useLiveInterval, useSocketEvents } from '../lib/hooks';
@@ -74,7 +74,7 @@ export function Shell({ children }: { children: ReactNode }) {
   </div>;
 }
 
-export function PageHeader({title,subtitle,onNew,children}:{title:string;subtitle?:string;onNew?:()=>void;children?:ReactNode}){const loc=useLocation();return <div className="border-b bg-white px-4 py-2.5"><div className="flex flex-wrap items-center gap-2"><div className="mr-auto"><div className="text-[11px] text-slate-400">CRM / {loc.pathname.split('/')[1]||'Dashboard'}</div><h1 className="text-lg font-semibold leading-tight">{title}</h1>{subtitle&&<p className="text-xs text-slate-500">{subtitle}</p>}</div>{onNew&&<button className="btn btn-primary" onClick={onNew}>New</button>}{children}</div></div>}
+export function PageHeader({title,subtitle,onNew,backTo,backLabel='Back',children}:{title:string;subtitle?:string;onNew?:()=>void;backTo?:string;backLabel?:string;children?:ReactNode}){const loc=useLocation(),navigate=useNavigate();return <div className="border-b bg-white px-4 py-2.5"><div className="flex flex-wrap items-center gap-2">{backTo&&<button type="button" className="btn h-8 shrink-0" aria-label={backLabel} title={backLabel} onClick={()=>navigate(backTo)}><ArrowLeft size={15}/><span className="hidden sm:inline">{backLabel}</span></button>}<div className="mr-auto"><div className="text-[11px] text-slate-400">CRM / {loc.pathname.split('/')[1]||'Dashboard'}</div><h1 className="text-lg font-semibold leading-tight">{title}</h1>{subtitle&&<p className="text-xs text-slate-500">{subtitle}</p>}</div>{onNew&&<button className="btn btn-primary" onClick={onNew}>New</button>}{children}</div></div>}
 
 export type FilterGroup = { key: string; label: string; options: { value: string; label: string }[] };
 export type ToolbarState = { filters: Record<string, string>; groupBy: string };

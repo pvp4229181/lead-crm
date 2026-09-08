@@ -187,8 +187,8 @@ export function ChatPanel({ conversation, onDeleted, onBack, onToggleLead }: {
   });
   const canDelete = user && ['Administrator', 'Sales Manager'].includes(user.role.name);
 
-  const isHuman = conversation.controlStatus === 'HUMAN_ACTIVE';
-  const canTakeover = conversation.controlStatus !== 'HUMAN_ACTIVE';
+  const aiActive = conversation.controlStatus === 'AI_ACTIVE' && conversation.aiEnabled;
+  const isHuman = !aiActive;
 
   const submit = () => { const body = text.trim(); if (body && !send.isPending) send.mutate(body); };
 
@@ -199,15 +199,9 @@ export function ChatPanel({ conversation, onDeleted, onBack, onToggleLead }: {
       {onBack && <button type="button" className="-ml-1 rounded p-1 text-white/60 transition-colors hover:bg-white/10 hover:text-white md:hidden" aria-label="Back to conversations" onClick={onBack}><ChevronLeft size={19} /></button>}
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-xs font-bold text-emerald-300">{(conversation.customerName ?? conversation.phoneNumber).slice(0, 2).toUpperCase()}</div>
       <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{conversation.customerName || conversation.phoneNumber}</div><div className="truncate text-xs text-white/45">{conversation.phoneNumber}</div></div>
-      <span className={`badge hidden shrink-0 sm:inline-flex ${CONTROL_TONE[conversation.controlStatus]}`}>
-        <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${conversation.controlStatus === 'AI_ACTIVE' ? 'bg-emerald-400' : conversation.controlStatus === 'AI_PAUSED' ? 'bg-slate-400' : 'bg-amber-400'}`} />
-        {CONTROL_LABEL[conversation.controlStatus]}
-      </span>
-      {/* `.btn` now sits in Tailwind's components layer, so these dark-surface utilities win
-          on their own; the `!` prefixes are kept only as belt-and-braces. */}
-      {canTakeover
-        ? <Button className="h-8 shrink-0 !border-white/15 !bg-white/10 !text-white hover:!bg-white/20" disabled={takeover.isPending} onClick={() => takeover.mutate()}><UserIcon size={13} /><span className="hidden sm:inline">Take over</span></Button>
-        : <Button className="h-8 shrink-0 !border-emerald-500/40 !bg-emerald-500/15 !text-emerald-200 hover:!bg-emerald-500/25" disabled={resumeAi.isPending} onClick={() => resumeAi.mutate()}><Bot size={13} /><span className="hidden sm:inline">Resume AI</span></Button>}
+      <button type="button" title={aiActive ? 'AI mode is active. Click to switch to Human mode.' : 'Human mode is active. Click to switch to AI mode.'} aria-label={aiActive ? 'Switch to Human mode' : 'Switch to AI mode'} className={`badge h-8 shrink-0 gap-1.5 transition hover:brightness-125 disabled:opacity-50 ${CONTROL_TONE[conversation.controlStatus]}`} disabled={takeover.isPending||resumeAi.isPending} onClick={()=>aiActive?takeover.mutate():resumeAi.mutate()}>
+        {aiActive?<Bot size={13}/>:<UserIcon size={13}/>}<span className="hidden sm:inline">{CONTROL_LABEL[conversation.controlStatus]}</span><span className="hidden xl:inline">→ {aiActive?'Human':'AI'}</span>
+      </button>
       {onToggleLead && <button type="button" title="Lead details" className="shrink-0 rounded p-1.5 text-white/45 transition-colors hover:bg-white/10 hover:text-white xl:hidden" onClick={onToggleLead}><Info size={16} /></button>}
       {canDelete && <button type="button" title="Delete this chat" className="shrink-0 rounded p-1.5 text-white/45 transition-colors hover:bg-red-500/15 hover:text-red-300" onClick={() => setConfirmDelete(true)}><Trash2 size={15} /></button>}
     </div>

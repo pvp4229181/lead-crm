@@ -11,6 +11,7 @@ const defaultRoles = [
   { name: 'Administrator', permissions: ['*'] },
   { name: 'Sales Manager', permissions: ['team:read', 'team:write', 'reports:read'] },
   { name: 'Salesperson', permissions: ['own:read', 'own:write'] },
+  { name: 'AI Agent', permissions: [] },
 ];
 
 async function ensureRoles() {
@@ -56,7 +57,9 @@ export async function deleteRole(req: Request, res: Response) {
 }
 
 export async function listUsers(_req: Request, res: Response) {
-  res.json(await User.find({ deletedAt: { $exists: false }, email: { $ne: 'whatsapp-ai@system.local' } }).select('name email avatar role active createdAt').populate('role', 'name permissions').sort('name'));
+  await ensureSystemUser();
+  const users = await User.find({ deletedAt: { $exists: false } }).select('name email avatar role active createdAt').populate('role', 'name permissions').sort('name').lean();
+  res.json(users.map(user => ({ ...user, isSystem: user.email === 'whatsapp-ai@system.local' })));
 }
 
 export async function createUser(req: Request, res: Response) {
@@ -64,13 +67,17 @@ export async function createUser(req: Request, res: Response) {
   if (typeof name !== 'string' || name.trim().length < 2) throw new ApiError(422, 'Name must contain at least 2 characters');
   if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError(422, 'Enter a valid email address');
   if (typeof password !== 'string' || password.length < 8) throw new ApiError(422, 'Temporary password must contain at least 8 characters');
-  if (!mongoose.isValidObjectId(role) || !await Role.exists({ _id: role, active: true })) throw new ApiError(422, 'Select a valid role');
+  if (!mongoose.isValidObjectId(role)) throw new ApiError(422, 'Select a valid role');
+  const selectedRole = await Role.findOne({ _id: role, active: true }).select('name');
+  if (!selectedRole) throw new ApiError(422, 'Select a valid role');
+  if (selectedRole.name === 'AI Agent') throw new ApiError(409, 'The AI Agent role is reserved for WhatsApp automation');
   if (await User.exists({ email: email.toLowerCase() })) throw new ApiError(409, 'A user with this email already exists');
   const user = await User.create({ name: name.trim(), email: email.toLowerCase(), password: await bcrypt.hash(password, 12), role, active: true });
   res.status(201).json(await User.findById(user._id).select('name email avatar role active createdAt').populate('role', 'name permissions'));
 }
 
 export async function updateUserAccess(req: Request, res: Response) {
+  if (await User.exists({ _id: req.params.id, email: 'whatsapp-ai@system.local' })) throw new ApiError(409, 'The WhatsApp AI Agent is a protected system account');
   if (!isAdministrator(req)) {
     const target = await User.findById(req.params.id).populate('role', 'name');
     if (!target) throw new ApiError(404, 'User not found');
@@ -80,7 +87,10 @@ export async function updateUserAccess(req: Request, res: Response) {
   if (String(req.user!._id) === String(req.params.id) && (req.body.active === false || req.body.role)) throw new ApiError(409, 'You cannot suspend your own account or change your own role');
   const update: { role?: string; active?: boolean } = {};
   if (req.body.role !== undefined) {
-    if (!mongoose.isValidObjectId(req.body.role) || !await Role.exists({ _id: req.body.role, active: true })) throw new ApiError(422, 'Select a valid role');
+    if (!mongoose.isValidObjectId(req.body.role)) throw new ApiError(422, 'Select a valid role');
+    const selectedRole = await Role.findOne({ _id: req.body.role, active: true }).select('name');
+    if (!selectedRole) throw new ApiError(422, 'Select a valid role');
+    if (selectedRole.name === 'AI Agent') throw new ApiError(409, 'The AI Agent role is reserved for WhatsApp automation');
     update.role = req.body.role;
   }
   if (req.body.active !== undefined) update.active = Boolean(req.body.active);

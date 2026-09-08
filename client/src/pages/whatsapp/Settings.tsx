@@ -13,7 +13,7 @@ const TABS = ['AI Agent', 'Knowledge Base', 'Templates', 'Campaigns', 'Accounts'
 export default function WhatsAppSettings() {
   const [tab, setTab] = useState<typeof TABS[number]>('AI Agent');
   return <>
-    <PageHeader title="WhatsApp AI Agent" subtitle="Configure how the AI sales agent behaves, what it knows, and who it hands off to." />
+    <PageHeader title="WhatsApp AI Agent" subtitle="Configure how the AI sales agent behaves, what it knows, and who it hands off to." backTo="/whatsapp" backLabel="Back to inbox" />
     <div className="border-b bg-white px-4"><nav className="flex gap-1">{TABS.map(t => <button key={t} className={`border-b-2 px-3 py-2.5 text-xs font-semibold ${tab === t ? 'border-[#0ea5e9] text-[#0284c7]' : 'border-transparent text-slate-500 hover:text-slate-800'}`} onClick={() => setTab(t)}>{t}</button>)}</nav></div>
     <div className="p-4">
       {tab === 'AI Agent' && <AgentConfig />}
