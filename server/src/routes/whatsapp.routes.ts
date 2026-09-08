@@ -42,6 +42,8 @@ whatsappApi.delete('/whatsapp/conversations/:id', managerUp, asyncHandler(wa.del
 whatsappApi.get('/whatsapp/conversations/:id/messages', asyncHandler(wa.listMessages));
 whatsappApi.post('/whatsapp/conversations/:id/messages', asyncHandler(wa.sendMessage));
 whatsappApi.delete('/whatsapp/conversations/:id/messages/:messageId', managerUp, asyncHandler(wa.deleteMessage));
+whatsappApi.get('/whatsapp/conversations/:id/meetings', asyncHandler(wa.listMeetings));
+whatsappApi.delete('/whatsapp/conversations/:id/meetings/:meetingId', asyncHandler(wa.deleteMeeting));
 whatsappApi.post('/whatsapp/conversations/:id/suggest-reply', asyncHandler(wa.suggestReply));
 whatsappApi.post('/whatsapp/conversations/:id/read', asyncHandler(wa.markRead));
 whatsappApi.patch('/whatsapp/conversations/:id/ai', asyncHandler(wa.setAiEnabled));

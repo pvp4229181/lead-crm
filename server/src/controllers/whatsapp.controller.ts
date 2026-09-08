@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import mongoose from 'mongoose';
-import { AIConversationSummary, Contact, Lead, User, WhatsAppConversation, WhatsAppMessage, WhatsAppTemplate } from '../models/index.js';
+import { Activity, ActivityType, AIConversationSummary, Contact, Lead, TimelineEvent, User, WhatsAppConversation, WhatsAppMessage, WhatsAppTemplate } from '../models/index.js';
 import { ApiError, escapeRegex } from '../utils/http.js';
 import { appendMessage, buildTranscript, identifyOrCreateForPhone, markConversationRead, recentHistory } from '../services/conversation.service.js';
 import { sendTemplateMessage, sendTextMessage, streamMedia } from '../services/whatsapp.service.js';
@@ -82,39 +82,65 @@ export async function listMessages(req: Request, res: Response) {
   res.json(messages.reverse());
 }
 
-// Removes one message from the CRM copy of a conversation. Meta does not expose a
-// general delete-for-everyone API, so this deliberately does not claim to remove the
-// message from either participant's phone. Keep the conversation's list preview in
-// sync when its newest message (or newest inbound message) is deleted.
+// Soft-deletes one message from the CRM copy of a conversation. Keeping the row lets
+// the UI show the same tombstone users expect from WhatsApp, while clearing the actual
+// text/media ensures the deleted content is not still retrievable through the API.
+// Meta does not expose a general delete-for-everyone API, so neither phone is changed.
 export async function deleteMessage(req: Request, res: Response) {
   const conversation = await scopedConversation(req, String(req.params.id));
   const message = await WhatsAppMessage.findOne({ _id: req.params.messageId, conversation: conversation._id });
   if (!message) throw new ApiError(404, 'Message not found');
+  if (message.deletedAt) throw new ApiError(409, 'Message is already deleted');
 
-  await message.deleteOne();
+  const deletedAt = new Date();
+  const deleted = await WhatsAppMessage.findByIdAndUpdate(message._id, {
+    $set: { deletedAt, deletedBy: req.user!._id },
+    $unset: { text: 1, mediaId: 1, mediaUrl: 1, mediaMimeType: 1, caption: 1, filename: 1, location: 1, templateName: 1, failReason: 1, intent: 1, sentiment: 1, metadata: 1 },
+  }, { new: true });
 
-  const [latest, latestInbound] = await Promise.all([
-    WhatsAppMessage.findOne({ conversation: conversation._id }).sort({ timestamp: -1, _id: -1 }).lean(),
-    WhatsAppMessage.findOne({ conversation: conversation._id, direction: 'INBOUND' }).sort({ timestamp: -1, _id: -1 }).select('timestamp').lean(),
-  ]);
+  const latest = await WhatsAppMessage.findOne({ conversation: conversation._id }).sort({ timestamp: -1, _id: -1 }).lean();
   const update: { $set?: Record<string, unknown>; $unset?: Record<string, 1> } = {};
   if (latest) {
     update.$set = {
-      lastMessage: latest.text?.slice(0, 120) ?? (latest.type !== 'text' ? `[${latest.type}]` : ''),
+      lastMessage: latest.deletedAt ? 'This message was deleted' : latest.text?.slice(0, 120) ?? (latest.type !== 'text' ? `[${latest.type}]` : ''),
       lastMessageAt: latest.timestamp,
     };
   } else {
     update.$unset = { lastMessage: 1, lastMessageAt: 1 };
   }
-  if (latestInbound) {
-    update.$set = { ...(update.$set ?? {}), lastInboundAt: latestInbound.timestamp };
-  } else {
-    update.$unset = { ...(update.$unset ?? {}), lastInboundAt: 1 };
-  }
   await WhatsAppConversation.updateOne({ _id: conversation._id }, update);
 
-  emitToConversation(String(conversation._id), 'message:deleted', { messageId: String(message._id) });
+  emitToConversation(String(conversation._id), 'message:deleted', { message: deleted!.toObject() });
   emitToConversation(String(conversation._id), 'conversation:updated', {});
+  res.json(deleted);
+}
+
+// Meetings raised by the WhatsApp qualification pipeline are ordinary CRM Activity
+// rows linked to the lead. These endpoints surface only still-planned Meeting rows for
+// the selected conversation, and the same conversation scope protects both operations.
+export async function listMeetings(req: Request, res: Response) {
+  const conversation = await scopedConversation(req, String(req.params.id));
+  if (!conversation.lead) return res.json([]);
+  const meetingTypes = await ActivityType.find({ name: /^Meeting$/i }).select('_id').lean();
+  const meetings = await Activity.find({
+    relatedModel: 'Lead', relatedId: conversation.lead,
+    activityType: { $in: meetingTypes.map(type => type._id) }, status: 'planned',
+  }).populate('activityType', 'name icon').populate('assignedTo', 'name avatar').sort('dueDate');
+  res.json(meetings);
+}
+
+export async function deleteMeeting(req: Request, res: Response) {
+  const conversation = await scopedConversation(req, String(req.params.id));
+  if (!conversation.lead) throw new ApiError(404, 'Scheduled meeting not found');
+  const meeting = await Activity.findOne({
+    _id: req.params.meetingId, relatedModel: 'Lead', relatedId: conversation.lead, status: 'planned',
+  }).populate('activityType', 'name');
+  if (!meeting || !/^Meeting$/i.test((meeting.activityType as any)?.name ?? '')) throw new ApiError(404, 'Scheduled meeting not found');
+  await meeting.deleteOne();
+  await TimelineEvent.create({
+    createdBy: req.user!._id, relatedModel: 'Lead', relatedId: conversation.lead,
+    eventType: 'activity_deleted', message: `Deleted scheduled meeting: ${meeting.summary}`,
+  });
   res.status(204).end();
 }
 
@@ -269,17 +295,17 @@ export async function dashboardMetrics(_req: Request, res: Response) {
     WhatsAppConversation.countDocuments({ status: 'open', controlStatus: { $in: ['HUMAN_ACTIVE', 'WAITING_HUMAN'] } }),
     Lead.countDocuments({ ...waLeadFilter, leadTemperature: { $in: ['Hot', 'Very Hot'] } }),
     WhatsAppConversation.countDocuments({ controlStatus: 'WAITING_HUMAN' }),
-    WhatsAppMessage.countDocuments({ timestamp: { $gte: since } }),
+    WhatsAppMessage.countDocuments({ deletedAt: { $exists: false }, timestamp: { $gte: since } }),
     Lead.aggregate([{ $match: waLeadFilter }, { $group: { _id: '$leadTemperature', count: { $sum: 1 } } }]),
   ]);
-  const byDay = await WhatsAppMessage.aggregate([{ $match: { timestamp: { $gte: new Date(Date.now() - 13 * 86400000) } } }, { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } }, count: { $sum: 1 } } }, { $sort: { _id: 1 } }]);
+  const byDay = await WhatsAppMessage.aggregate([{ $match: { deletedAt: { $exists: false }, timestamp: { $gte: new Date(Date.now() - 13 * 86400000) } } }, { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } }, count: { $sum: 1 } } }, { $sort: { _id: 1 } }]);
   const [waTotal, waConverted] = await Promise.all([
     Lead.countDocuments(waLeadFilter),
     Lead.countDocuments({ ...waLeadFilter, $or: [{ converted: true }, { qualificationStatus: 'won' }] }),
   ]);
   // Median-free mean of the gap between each inbound message and the reply that followed it.
   const responsePairs = await WhatsAppMessage.aggregate([
-    { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 86400000) } } },
+    { $match: { deletedAt: { $exists: false }, timestamp: { $gte: new Date(Date.now() - 7 * 86400000) } } },
     { $sort: { conversation: 1, timestamp: 1 } },
     { $group: { _id: '$conversation', messages: { $push: { direction: '$direction', timestamp: '$timestamp' } } } },
   ]);

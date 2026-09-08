@@ -51,7 +51,7 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
     const socket = getSocket();
     const onMessage = (payload: { conversationId: string; message: WAMessage }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => [...prev, payload.message]); };
     const onStatus = (payload: { conversationId: string; messageId: string; status: WAMessage['status'] }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.map(m => (m._id === payload.messageId ? { ...m, status: payload.status } : m))); };
-    const onDeletedMessage = (payload: { conversationId: string; messageId: string }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.filter(m => m._id !== payload.messageId)); };
+    const onDeletedMessage = (payload: { conversationId: string; message: WAMessage }) => { if (payload.conversationId === conversation._id) qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.map(message => message._id === payload.message._id ? payload.message : message)); };
     socket.on('message:new', onMessage); socket.on('message:status', onStatus); socket.on('message:deleted', onDeletedMessage);
     return () => { socket.off('message:new', onMessage); socket.off('message:status', onStatus); socket.off('message:deleted', onDeletedMessage); };
   }, [conversation._id, qc]);
@@ -82,9 +82,9 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
     },
   });
   const deleteMessage = useMutation({
-    mutationFn: (messageId: string) => api(`/whatsapp/conversations/${conversation._id}/messages/${messageId}`, { method: 'DELETE' }),
-    onSuccess: (_data, messageId) => {
-      qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.filter(message => message._id !== messageId));
+    mutationFn: (messageId: string) => api<WAMessage>(`/whatsapp/conversations/${conversation._id}/messages/${messageId}`, { method: 'DELETE' }),
+    onSuccess: deleted => {
+      qc.setQueryData<WAMessage[]>(['wa-messages', conversation._id], (prev = []) => prev.map(message => message._id === deleted._id ? deleted : message));
       setDeleteTarget(null);
       qc.invalidateQueries({ queryKey: ['wa-conversations'] });
       qc.invalidateQueries({ queryKey: ['wa-conversation', conversation._id] });
@@ -132,8 +132,8 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
         <div className="max-h-28 overflow-auto rounded-md bg-slate-100 p-3 text-xs text-slate-700">
           {deleteTarget.text || deleteTarget.caption || `[${deleteTarget.type} message]`}
         </div>
-        <p>This permanently removes the message from this CRM conversation.</p>
-        <p className="text-xs text-slate-400">It will remain visible in WhatsApp on the customer's and sender's phones.</p>
+        <p>This hides the original content and leaves a “This message was deleted” marker in the CRM conversation.</p>
+        <p className="text-xs text-slate-400">The original message will remain visible in WhatsApp on the customer's and sender's phones.</p>
         {deleteMessage.isError && <p className="text-xs text-red-600">{(deleteMessage.error as any)?.message ?? 'Could not delete this message.'}</p>}
       </div>
       <div className="flex justify-end gap-2 border-t bg-slate-50 p-3">
@@ -149,10 +149,10 @@ export function ChatPanel({ conversation, onDeleted }: { conversation: WAConvers
         return <div key={message._id} className={`group flex items-center gap-1 ${mine ? 'justify-end' : 'justify-start'}`}>
           <div className={`max-w-[75%] rounded-xl px-3 py-2 text-sm shadow-sm ${mine ? (message.aiGenerated ? 'bg-[#046c4e] text-white' : 'bg-[#005c4b] text-white') : 'bg-[#202c33] text-[#e9edef]'}`}>
             {message.aiGenerated && <div className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-white/70"><Bot size={11} />AI</div>}
-            {message.type === 'text' ? <p className="whitespace-pre-wrap break-words">{message.text}</p> : <MediaBubble message={message} />}
-            <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${mine ? 'text-white/55' : 'text-white/40'}`}>{time(message.timestamp)}{mine && <StatusTick status={message.status} />}</div>
+            {message.deletedAt ? <p className="italic text-white/50">This message was deleted</p> : message.type === 'text' ? <p className="whitespace-pre-wrap break-words">{message.text}</p> : <MediaBubble message={message} />}
+            <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${mine ? 'text-white/55' : 'text-white/40'}`}>{time(message.timestamp)}{mine && !message.deletedAt && <StatusTick status={message.status} />}</div>
           </div>
-          {canDelete && <button type="button" title="Delete message from CRM" aria-label="Delete message from CRM" disabled={deleteMessage.isPending} className="rounded p-1.5 text-white/35 opacity-40 transition hover:bg-red-500/15 hover:text-red-300 focus:opacity-100 disabled:opacity-20 sm:opacity-0 sm:group-hover:opacity-100" onClick={() => { deleteMessage.reset(); setDeleteTarget(message); }}><Trash2 size={14} /></button>}
+          {canDelete && !message.deletedAt && <button type="button" title="Delete message from CRM" aria-label="Delete message from CRM" disabled={deleteMessage.isPending} className="rounded p-1.5 text-white/35 opacity-40 transition hover:bg-red-500/15 hover:text-red-300 focus:opacity-100 disabled:opacity-20 sm:opacity-0 sm:group-hover:opacity-100" onClick={() => { deleteMessage.reset(); setDeleteTarget(message); }}><Trash2 size={14} /></button>}
         </div>;
       })}
       {!messages.isLoading && !messages.data?.length && <div className="text-center text-xs text-white/40">No messages yet.</div>}

@@ -115,9 +115,24 @@ ok('greeting message stored as a template message', (await models.WhatsAppMessag
 ok('lead is never greeted twice', (await greetNewLead(greetLead._id)) === null);
 
 // --- Deleting a chat ---------------------------------------------------------
-const { deleteConversation, deleteMessage } = await import('../dist/controllers/whatsapp.controller.js');
-const resStub = () => { const r: any = { code: 0, status(c: number) { r.code = c; return r; }, end() { return r; }, json() { return r; } }; return r; };
+const { deleteConversation, deleteMessage, listMeetings, deleteMeeting } = await import('../dist/controllers/whatsapp.controller.js');
+const resStub = () => { const r: any = { code: 0, payload: null, status(c: number) { r.code = c; return r; }, end() { return r; }, json(data: any) { r.payload = data; return r; } }; return r; };
 const adminUser = { _id: user._id, role: { name: 'Administrator' } };
+
+// --- Listing and deleting a scheduled meeting ------------------------------
+const meetingType = await models.ActivityType.findOne({ name: 'Meeting' });
+const scheduledMeeting = await models.Activity.create({
+  activityType: meetingType!._id, dueDate: new Date(Date.now() + 86400000), assignedTo: user._id,
+  summary: 'Discovery meeting with Neha', relatedModel: 'Lead', relatedId: gConv!.lead, createdBy: user._id,
+});
+const meetingListRes = resStub();
+await listMeetings({ user: adminUser, params: { id: String(gConv!._id) } } as any, meetingListRes);
+ok('scheduled meetings are listed for the conversation lead', meetingListRes.payload?.some((meeting: any) => String(meeting._id) === String(scheduledMeeting._id)), meetingListRes.payload);
+const deleteMeetingRes = resStub();
+await deleteMeeting({ user: adminUser, params: { id: String(gConv!._id), meetingId: String(scheduledMeeting._id) } } as any, deleteMeetingRes);
+ok('deleting a scheduled meeting responds 204', deleteMeetingRes.code === 204, deleteMeetingRes.code);
+ok('scheduled meeting is removed', !(await models.Activity.exists({ _id: scheduledMeeting._id })));
+ok('meeting deletion leaves an audit event', Boolean(await models.TimelineEvent.exists({ relatedModel: 'Lead', relatedId: gConv!.lead, eventType: 'activity_deleted' })));
 
 // --- Deleting one message ---------------------------------------------------
 const messageConv = await models.WhatsAppConversation.create({
@@ -135,9 +150,11 @@ const newestMessage = await models.WhatsAppMessage.create({
 const deleteMessageRes = resStub();
 await deleteMessage({ user: adminUser, params: { id: String(messageConv._id), messageId: String(newestMessage._id) } } as any, deleteMessageRes);
 const afterOneMessageDelete = await models.WhatsAppConversation.findById(messageConv._id);
-ok('deleting one message responds 204', deleteMessageRes.code === 204, deleteMessageRes.code);
-ok('only the selected message is deleted', !(await models.WhatsAppMessage.exists({ _id: newestMessage._id })) && Boolean(await models.WhatsAppMessage.exists({ _id: olderMessage._id })));
-ok('conversation preview falls back to the previous message', afterOneMessageDelete?.lastMessage === 'Older customer message', afterOneMessageDelete?.lastMessage);
+const deletedNewestMessage = await models.WhatsAppMessage.findById(newestMessage._id);
+ok('deleting one message returns its tombstone', Boolean(deleteMessageRes.payload?.deletedAt), deleteMessageRes.payload);
+ok('deleted message row is retained without its original content', Boolean(deletedNewestMessage?.deletedAt) && !deletedNewestMessage?.text);
+ok('other messages remain unchanged', (await models.WhatsAppMessage.findById(olderMessage._id))?.text === 'Older customer message');
+ok('conversation preview shows the deleted marker', afterOneMessageDelete?.lastMessage === 'This message was deleted', afterOneMessageDelete?.lastMessage);
 
 let wrongConversationDenied = false;
 const otherMessageConv = await models.WhatsAppConversation.create({ phoneNumber: '919000000002' });
@@ -146,9 +163,9 @@ catch (error: any) { wrongConversationDenied = error?.status === 404; }
 ok('a message cannot be deleted through another conversation', wrongConversationDenied);
 
 await deleteMessage({ user: adminUser, params: { id: String(messageConv._id), messageId: String(olderMessage._id) } } as any, resStub());
-const emptyMessageConv = await models.WhatsAppConversation.findById(messageConv._id);
-ok('deleting the last message keeps the conversation', Boolean(emptyMessageConv));
-ok('an empty conversation has no stale preview', !emptyMessageConv?.lastMessage && !emptyMessageConv?.lastMessageAt && !emptyMessageConv?.lastInboundAt, emptyMessageConv);
+const allDeletedMessageConv = await models.WhatsAppConversation.findById(messageConv._id);
+ok('deleted messages remain visible as two tombstones', (await models.WhatsAppMessage.countDocuments({ conversation: messageConv._id, deletedAt: { $ne: null } })) === 2);
+ok('soft deletion keeps the original inbound timing for automation', String(allDeletedMessageConv?.lastInboundAt) === String(messageConv.lastInboundAt), allDeletedMessageConv?.lastInboundAt);
 
 await models.AIConversationSummary.create({ conversation: gConv!._id, lead: greetLead._id, summary: 'Interested in the portal' });
 const beforeDelete = await models.WhatsAppMessage.countDocuments({ conversation: gConv!._id });

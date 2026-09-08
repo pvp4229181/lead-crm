@@ -209,6 +209,8 @@ const whatsAppMessageSchema = new Schema({
   failReason: String,
   aiGenerated: { type: Boolean, default: false },
   sentBy: ref('User'),
+  deletedAt: Date,
+  deletedBy: ref('User'),
   intent: String,
   sentiment: String,
   metadata: { type: Schema.Types.Mixed, default: {} },

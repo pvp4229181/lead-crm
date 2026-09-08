@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Frown, Meh, Smile } from 'lucide-react';
+import { CalendarDays, Frown, Meh, Smile, Trash2 } from 'lucide-react';
 import { api, date, money } from '../../lib/api';
-import type { Metadata, WAConversation, WALead } from '../../lib/types';
+import type { Activity, Metadata, WAConversation, WALead } from '../../lib/types';
 
 const TEMP_TONE: Record<string, string> = { Cold: 'bg-slate-100 text-slate-600', Warm: 'bg-amber-100 text-amber-700', Hot: 'bg-orange-100 text-orange-700', 'Very Hot': 'bg-red-100 text-red-700' };
 const SENTIMENT_ICON = { positive: <Smile size={14} className="text-emerald-500" />, neutral: <Meh size={14} className="text-slate-400" />, negative: <Frown size={14} className="text-red-500" /> } as const;
@@ -14,8 +14,10 @@ export function LeadPanel({ conversation }: { conversation: WAConversation }) {
   const qc = useQueryClient();
   const lead = conversation.lead;
   const meta = useQuery({ queryKey: ['metadata'], queryFn: () => api<Metadata>('/metadata') });
+  const meetings = useQuery({ queryKey: ['wa-meetings', conversation._id], queryFn: () => api<Activity[]>(`/whatsapp/conversations/${conversation._id}/meetings`), enabled: Boolean(lead) });
   const [edit, setEdit] = useState<Partial<WALead>>({});
-  useEffect(() => { setEdit({}); }, [lead?._id]);
+  const [meetingError, setMeetingError] = useState('');
+  useEffect(() => { setEdit({}); setMeetingError(''); }, [lead?._id]);
 
   const saveLead = useMutation({
     mutationFn: (body: Record<string, unknown>) => api<WALead>(`/leads/${lead!._id}`, { method: 'PATCH', body: JSON.stringify(body) }),
@@ -24,6 +26,16 @@ export function LeadPanel({ conversation }: { conversation: WAConversation }) {
   const assign = useMutation({
     mutationFn: (assignedTo: string) => api(`/whatsapp/conversations/${conversation._id}`, { method: 'PATCH', body: JSON.stringify({ assignedTo: assignedTo || null }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-conversations'] }),
+  });
+  const deleteMeeting = useMutation({
+    mutationFn: (meetingId: string) => api(`/whatsapp/conversations/${conversation._id}/meetings/${meetingId}`, { method: 'DELETE' }),
+    onMutate: () => setMeetingError(''),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['wa-meetings', conversation._id] });
+      qc.invalidateQueries({ queryKey: ['activities'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+    onError: (cause: any) => setMeetingError(cause?.message ?? 'Could not delete the scheduled meeting.'),
   });
 
   if (!lead) return <div className="w-80 shrink-0 border-l bg-white p-4 text-xs text-slate-400">No lead linked to this conversation yet.</div>;
@@ -34,6 +46,16 @@ export function LeadPanel({ conversation }: { conversation: WAConversation }) {
     <div className="mb-3 flex items-center justify-between">
       <h3 className="text-sm font-semibold">Lead details</h3>
       <span className={`badge ${TEMP_TONE[lead.leadTemperature]}`}>{lead.leadTemperature} · {lead.leadScore}</span>
+    </div>
+    <div className="mb-4 rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-sky-800"><CalendarDays size={14} />Scheduled meetings</div>
+      {meetings.isLoading && <p className="text-[11px] text-slate-400">Loading meetings…</p>}
+      {meetings.data?.map(meeting => <div className="flex items-start gap-2 border-t border-sky-100 py-2 first:border-t-0 first:pt-0 last:pb-0" key={meeting._id}>
+        <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-slate-700">{meeting.summary}</p><p className="mt-0.5 text-[10px] text-slate-500">{new Date(meeting.dueDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</p></div>
+        <button type="button" title="Delete scheduled meeting" aria-label="Delete scheduled meeting" disabled={deleteMeeting.isPending} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40" onClick={() => confirm(`Delete scheduled meeting “${meeting.summary}”?`) && deleteMeeting.mutate(meeting._id)}><Trash2 size={13} /></button>
+      </div>)}
+      {!meetings.isLoading && !meetings.data?.length && <p className="text-[11px] text-slate-400">No meetings scheduled.</p>}
+      {meetingError && <p className="mt-2 text-[11px] text-red-600">{meetingError}</p>}
     </div>
     <div className="space-y-3">
       <Field label="Customer"><input className="field h-8" defaultValue={lead.contactName ?? ''} onChange={e => setEdit(x => ({ ...x, contactName: e.target.value }))} onBlur={() => commit('contactName')} /></Field>

@@ -116,7 +116,7 @@ export async function markConversationRead(conversationId: string) {
 }
 
 export async function recentHistory(conversationId: mongoose.Types.ObjectId | string, limit = 20) {
-  const messages = await WhatsAppMessage.find({ conversation: conversationId, type: { $in: ['text', 'interactive'] } }).sort('-timestamp').limit(limit);
+  const messages = await WhatsAppMessage.find({ conversation: conversationId, deletedAt: { $exists: false }, type: { $in: ['text', 'interactive'] } }).sort('-timestamp').limit(limit);
   return messages.reverse();
 }
 
