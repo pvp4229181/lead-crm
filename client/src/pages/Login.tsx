@@ -5,8 +5,11 @@ import { useAuth } from '../context/Auth';
 
 export default function Login() {
   const { user, login } = useAuth();
-  const [email, setEmail] = useState('admin@orbitcrm.test');
-  const [password, setPassword] = useState('Password123!');
+  // Prefilled only for local development against the seeded workspace; a deployed build
+  // must never present a working credential pair to whoever opens the page.
+  const seeded = import.meta.env.DEV;
+  const [email, setEmail] = useState(seeded ? 'admin@orbitcrm.test' : '');
+  const [password, setPassword] = useState(seeded ? 'Password123!' : '');
   const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);

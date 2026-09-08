@@ -47,6 +47,8 @@ leadSchema.index({ salesperson: 1, status: 1, createdAt: -1 });
 leadSchema.index({ salesTeam: 1, source: 1, campaign: 1 });
 leadSchema.index({ leadTemperature: 1, qualificationStatus: 1 });
 leadSchema.index({ phone: 1 });
+// WhatsApp dashboard metrics filter every count by the WhatsApp lead source.
+leadSchema.index({ source: 1, createdAt: -1 });
 
 const opportunitySchema = new Schema({ title: { type: String, required: true, trim: true }, company: ref('Company'), contact: ref('Contact'), email: { type: String, lowercase: true }, phone: String, expectedRevenue: { type: Number, min: 0, default: 0 }, recurringRevenue: { type: Number, min: 0, default: 0 }, probability: { type: Number, min: 0, max: 100, default: 10 }, priority: { type: Number, min: 0, max: 3, default: 1 }, salesperson: ref('User'), salesTeam: ref('SalesTeam'), stage: ref('PipelineStage', true), tags: [ref('Tag')], source: ref('LeadSource'), medium: ref('Medium'), campaign: ref('Campaign'), expectedClosingDate: Date, status: { type: String, enum: ['open', 'won', 'lost'], default: 'open' }, lostReason: ref('LostReason'), lostNotes: String, wonAt: Date, lostAt: Date, kanbanOrder: { type: Number, default: 0 }, internalNotes: String, referredBy: String, createdBy: ref('User', true), updatedBy: ref('User', true) }, { timestamps: true });
 opportunitySchema.index({ title: 'text', email: 'text', phone: 'text' });
@@ -187,6 +189,8 @@ whatsAppConversationSchema.index({ phoneNumber: 1 }, { unique: true });
 whatsAppConversationSchema.index({ status: 1, lastMessageAt: -1 });
 whatsAppConversationSchema.index({ assignedTo: 1, status: 1 });
 whatsAppConversationSchema.index({ controlStatus: 1 });
+// The inbox always sorts by recency within an archived/not-archived split.
+whatsAppConversationSchema.index({ archived: 1, lastMessageAt: -1 });
 
 const whatsAppMessageSchema = new Schema({
   conversation: ref('WhatsAppConversation', true),
@@ -218,6 +222,9 @@ const whatsAppMessageSchema = new Schema({
 }, { timestamps: true });
 whatsAppMessageSchema.index({ whatsappMessageId: 1 }, { unique: true, sparse: true });
 whatsAppMessageSchema.index({ conversation: 1, timestamp: 1 });
+// Dashboard metrics scan by time across all conversations (messages today, by day,
+// response time), which had no index to stand on.
+whatsAppMessageSchema.index({ timestamp: -1 });
 
 const aiConversationSummarySchema = new Schema({
   conversation: ref('WhatsAppConversation', true),

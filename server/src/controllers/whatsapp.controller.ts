@@ -14,6 +14,9 @@ import { emitToConversation } from '../realtime.js';
 // that isn't theirs.
 const leadScope = (req: Request) => accessScope(req);
 
+// Ceiling on the lead ids folded into a conversation search/hot filter (see listConversations).
+const LEAD_MATCH_LIMIT = 500;
+
 const leadFields = 'title contactName companyName email phone expectedRevenue priority salesperson leadScore leadTemperature qualificationStatus customerIntent budget purchaseTimeline quantity requirements painPoints objections productInterest aiSummary recommendedNextAction salesProbability lastAiAnalysisAt status converted convertedOpportunity tags source createdAt';
 
 // Salespersons only see conversations assigned to them or tied to their own leads;
@@ -23,8 +26,10 @@ const leadFields = 'title contactName companyName email phone expectedRevenue pr
 async function conversationScope(req: Request) {
   const role = (req.user!.role as any)?.name;
   if (role === 'Administrator' || role === 'Sales Manager') return {};
-  const myLeadIds = await Lead.find({ salesperson: req.user!._id }).select('_id').lean();
-  return { $and: [{ $or: [{ assignedTo: req.user!._id }, { lead: { $in: myLeadIds.map(l => l._id) } }] }] };
+  // distinct() is answered straight from the { salesperson, status, createdAt } index and
+  // returns bare ids, instead of hydrating every lead the salesperson owns on each request.
+  const myLeadIds = await Lead.distinct('_id', { salesperson: req.user!._id }) as mongoose.Types.ObjectId[];
+  return { $and: [{ $or: [{ assignedTo: req.user!._id }, { lead: { $in: myLeadIds } }] }] };
 }
 
 // Loads a conversation the caller is actually allowed to see, or throws 404.
@@ -49,25 +54,29 @@ export async function listConversations(req: Request, res: Response) {
   if (q.filter === 'hot' || q.search) {
     const leadMatch: any = q.filter === 'hot' ? { leadTemperature: { $in: ['Hot', 'Very Hot'] } } : {};
     if (q.search) Object.assign(leadMatch, { $or: ['title', 'contactName', 'companyName', 'email', 'phone'].map(k => ({ [k]: new RegExp(escapeRegex(q.search!), 'i') })) });
-    const leads = await Lead.find(leadMatch).select('_id').lean();
-    leadFilterIds = leads.map(l => l._id);
+    // Bounded: a bare search term used to pull every matching lead id into memory before
+    // the conversation query even ran. The cap is generous next to a page of 25 chats.
+    leadFilterIds = (await Lead.distinct('_id', leadMatch) as mongoose.Types.ObjectId[]).slice(0, LEAD_MATCH_LIMIT);
   }
   if (q.filter === 'hot') filter.lead = { $in: leadFilterIds };
   if (q.search) filter.$or = [{ customerName: new RegExp(escapeRegex(q.search), 'i') }, { phoneNumber: new RegExp(escapeRegex(q.search), 'i') }, ...(leadFilterIds?.length ? [{ lead: { $in: leadFilterIds } }] : [])];
 
   const skip = (q.page - 1) * q.limit;
   const [data, total] = await Promise.all([
-    WhatsAppConversation.find(filter).populate('lead', leadFields).populate('contact', 'name email').populate('assignedTo', 'name avatar').populate('tags', 'name color').sort('-lastMessageAt').skip(skip).limit(q.limit),
+    WhatsAppConversation.find(filter).populate('lead', leadFields).populate('contact', 'name email').populate('assignedTo', 'name avatar').populate('tags', 'name color').sort('-lastMessageAt').skip(skip).limit(q.limit).lean(),
     WhatsAppConversation.countDocuments(filter),
   ]);
   res.json({ data, pagination: { page: q.page, limit: q.limit, total, pages: Math.ceil(total / q.limit) } });
 }
 
+// `?messages=0` returns the conversation alone. The inbox polls this purely to refresh the
+// header and lead panel and discards the messages, which were 50 extra documents per poll.
 export async function getConversation(req: Request, res: Response) {
   const scope = await conversationScope(req);
-  const conversation = await WhatsAppConversation.findOne({ _id: req.params.id, ...scope }).populate('lead', leadFields).populate('contact').populate('assignedTo', 'name avatar').populate('tags', 'name color');
+  const conversation = await WhatsAppConversation.findOne({ _id: req.params.id, ...scope }).populate('lead', leadFields).populate('contact').populate('assignedTo', 'name avatar').populate('tags', 'name color').lean();
   if (!conversation) throw new ApiError(404, 'Conversation not found');
-  const messages = await WhatsAppMessage.find({ conversation: conversation._id }).sort('-timestamp').limit(50);
+  if (req.query.messages === '0') return res.json({ conversation, messages: [] });
+  const messages = await WhatsAppMessage.find({ conversation: conversation._id }).sort('-timestamp').limit(50).lean();
   res.json({ conversation, messages: messages.reverse() });
 }
 
@@ -78,7 +87,7 @@ export async function listMessages(req: Request, res: Response) {
   const limit = Math.min(100, Number(req.query.limit ?? 50));
   const filter: any = { conversation: conversation._id };
   if (before) filter.timestamp = { $lt: before };
-  const messages = await WhatsAppMessage.find(filter).sort('-timestamp').limit(limit);
+  const messages = await WhatsAppMessage.find(filter).sort('-timestamp').limit(limit).lean();
   res.json(messages.reverse());
 }
 
@@ -303,25 +312,26 @@ export async function dashboardMetrics(_req: Request, res: Response) {
     Lead.countDocuments(waLeadFilter),
     Lead.countDocuments({ ...waLeadFilter, $or: [{ converted: true }, { qualificationStatus: 'won' }] }),
   ]);
-  // Median-free mean of the gap between each inbound message and the reply that followed it.
-  const responsePairs = await WhatsAppMessage.aggregate([
+  // Mean gap between the moment a customer started waiting (the first inbound of a run) and
+  // the reply that ended the wait. Computed inside MongoDB: the previous version grouped a
+  // week of messages into one array per conversation, which both streamed the entire message
+  // history into this process and blew the 16MB document limit on any busy conversation.
+  const [responseTime] = await WhatsAppMessage.aggregate([
     { $match: { deletedAt: { $exists: false }, timestamp: { $gte: new Date(Date.now() - 7 * 86400000) } } },
-    { $sort: { conversation: 1, timestamp: 1 } },
-    { $group: { _id: '$conversation', messages: { $push: { direction: '$direction', timestamp: '$timestamp' } } } },
+    { $project: { conversation: 1, direction: 1, timestamp: 1 } },
+    { $setWindowFields: { partitionBy: '$conversation', sortBy: { timestamp: 1 }, output: { previousDirection: { $shift: { output: '$direction', by: -1 } } } } },
+    // The first inbound of a run marks when the customer began waiting; carry it forward
+    // across the rest of the run so the reply can measure back to it.
+    { $addFields: { waitingSince: { $cond: [{ $and: [{ $eq: ['$direction', 'INBOUND'] }, { $ne: ['$previousDirection', 'INBOUND'] }] }, '$timestamp', null] } } },
+    { $fill: { partitionBy: '$conversation', sortBy: { timestamp: 1 }, output: { waitingSince: { method: 'locf' } } } },
+    { $match: { direction: 'OUTBOUND', previousDirection: 'INBOUND', waitingSince: { $ne: null } } },
+    { $group: { _id: null, averageMs: { $avg: { $subtract: ['$timestamp', '$waitingSince'] } } } },
   ]);
-  let totalGapMs = 0, gaps = 0;
-  for (const conv of responsePairs) {
-    let pendingInbound: Date | null = null;
-    for (const message of conv.messages as { direction: string; timestamp: Date }[]) {
-      if (message.direction === 'INBOUND') pendingInbound ??= message.timestamp;
-      else if (pendingInbound) { totalGapMs += new Date(message.timestamp).getTime() - new Date(pendingInbound).getTime(); gaps += 1; pendingInbound = null; }
-    }
-  }
   res.json({
     newWhatsAppLeads: newLeads, activeConversations: active, aiConversations: ai, humanConversations: human,
     hotLeads: hot, humanHandoffs: handoffs, messagesToday,
     whatsappConversionRate: waTotal ? Math.round((waConverted / waTotal) * 100) : 0,
-    averageResponseTimeMinutes: gaps ? Math.round(totalGapMs / gaps / 60000) : null,
+    averageResponseTimeMinutes: responseTime?.averageMs != null ? Math.round(responseTime.averageMs / 60000) : null,
     messagesByDay: byDay, leadTemperature: tempDist,
   });
 }

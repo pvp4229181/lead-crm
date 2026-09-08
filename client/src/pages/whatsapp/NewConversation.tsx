@@ -4,6 +4,7 @@ import { Send } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Paged, WALead, WATemplate } from '../../lib/types';
 import { Button, Modal } from '../../components/ui';
+import { useDebounced } from '../../lib/hooks';
 
 // Counts the {{n}} placeholders a template body declares, so the form can ask for exactly
 // the values Meta will expect — a mismatch is rejected by the API at send time.
@@ -33,7 +34,8 @@ export function NewConversation({ onClose, onSent }: { onClose: () => void; onSe
   const [variables, setVariables] = useState<string[]>([]);
   const [error, setError] = useState('');
 
-  const leads = useQuery({ queryKey: ['wa-lead-picker', search], queryFn: () => api<Paged<WALead>>(`/leads?limit=20&search=${encodeURIComponent(search)}`) });
+  const leadQuery = useDebounced(search.trim());
+  const leads = useQuery({ queryKey: ['wa-lead-picker', leadQuery], queryFn: () => api<Paged<WALead>>(`/leads?limit=20&search=${encodeURIComponent(leadQuery)}`), placeholderData: previous => previous });
   const templates = useQuery({ queryKey: ['wa-templates'], queryFn: () => api<WATemplate[]>('/whatsapp/templates') });
   const approved = useMemo(() => (templates.data ?? []).filter(t => t.status === 'APPROVED'), [templates.data]);
   const selectedTemplate = approved.find(t => t._id === templateId);

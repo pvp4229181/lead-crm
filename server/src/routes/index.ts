@@ -65,7 +65,7 @@ for (const [path, model] of Object.entries(crm.models) as [string, any][]) {
   const owned = path === 'notifications' || path === 'filters';
   api.get(`/${path}`, asyncHandler(async (req, res) => {
     const query = owned ? { user: req.user!._id } : {};
-    res.json(await model.find(query).populate(listPopulate[path] ?? []).sort(path === 'activities' ? 'dueDate' : 'name').limit(500));
+    res.json(await model.find(query).populate(listPopulate[path] ?? []).sort(path === 'activities' ? 'dueDate' : 'name').limit(500).lean());
   }));
   api.post(`/${path}`, asyncHandler(async (req, res) => {
     if (adminResources.has(path) && (req.user!.role as any).name !== 'Administrator') throw new ApiError(403, 'Administrator access required');

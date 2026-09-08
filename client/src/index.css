@@ -5,6 +5,9 @@
   color: #1e293b;
   background: #f8fafc;
   font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
   --brand-50: #f0f9ff;
   --brand-100: #e0f2fe;
   --brand-200: #bae6fd;
@@ -12,6 +15,15 @@
   --brand-500: #0ea5e9;
   --brand-600: #0284c7;
   --brand-700: #0369a1;
+
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
+  --muted: #64748b;
+
+  --ring: 0 0 0 3px rgb(56 189 248 / 22%);
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 5%);
+  --shadow-md: 0 4px 12px -2px rgb(15 23 42 / 8%), 0 2px 4px -2px rgb(15 23 42 / 6%);
+  --ease: cubic-bezier(.4, 0, .2, 1);
 }
 
 * { box-sizing: border-box; }
@@ -19,15 +31,119 @@ body { margin: 0; min-width: 320px; background: #f8fafc; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .6; }
-.scrollbar-thin { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
-.field { height: 34px; width: 100%; border: 1px solid #d9dce2; border-radius: 5px; background: white; padding: 0 10px; font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s; }
-.field:focus { border-color: var(--brand-400); box-shadow: 0 0 0 3px rgb(56 189 248 / 16%); }
-.search-field { padding-left: 2.25rem !important; }
-.btn { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #d6d8de; border-radius: 5px; padding: 0 12px; font-size: 13px; font-weight: 550; background: white; color: #35333a; transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s; }
-.btn:hover:not(:disabled) { background: #f8fafc; border-color: #cbd5e1; }
-.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(56 189 248 / 20%); }
-.btn-primary { background: var(--brand-500); color: white; border-color: var(--brand-500); }
-.btn-primary:hover:not(:disabled) { background: var(--brand-600); border-color: var(--brand-600); }
-.panel { background: white; border: 1px solid #e2e8f0; border-radius: 7px; }
-.label { font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px; display: block; }
-.badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+
+/* A single visible focus treatment for keyboard users across every control. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: 5px;
+}
+
+.scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: rgb(148 163 184 / 45%); border-radius: 99px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgb(148 163 184 / 70%); }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
+/*
+ * Component classes live in Tailwind's `components` layer so page-level utilities
+ * (`h-8`, `!bg-emerald-600`, …) reliably win over them. Unlayered, these rules outranked
+ * every utility and silently dropped one-off overrides at the call site.
+ */
+@layer components {
+  .field {
+    height: 34px;
+    width: 100%;
+    border: 1px solid #d9dce2;
+    border-radius: 5px;
+    background: white;
+    padding: 0 10px;
+    font-size: 13px;
+    color: inherit;
+    outline: none;
+    transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background-color .15s var(--ease);
+  }
+  .field:hover:not(:disabled):not(:focus) { border-color: var(--line-strong); }
+  .field:focus { border-color: var(--brand-400); box-shadow: var(--ring); }
+  .field:disabled { background: #f8fafc; color: var(--muted); }
+  textarea.field { height: auto; padding: 8px 10px; line-height: 1.5; }
+  .search-field { padding-left: 2.25rem !important; }
+
+  .btn {
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 1px solid #d6d8de;
+    border-radius: 5px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 550;
+    white-space: nowrap;
+    background: white;
+    color: #35333a;
+    transition: background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease), box-shadow .15s var(--ease), transform .06s var(--ease);
+  }
+  .btn:hover:not(:disabled) { background: #f8fafc; border-color: var(--line-strong); }
+  .btn:active:not(:disabled) { transform: translateY(.5px); }
+  .btn:focus-visible { outline: none; box-shadow: var(--ring); }
+
+  .btn-primary { background: var(--brand-500); color: white; border-color: var(--brand-500); box-shadow: var(--shadow-sm); }
+  .btn-primary:hover:not(:disabled) { background: var(--brand-600); border-color: var(--brand-600); }
+
+  .panel { background: white; border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow-sm); }
+
+  .label { font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px; display: block; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.45;
+    white-space: nowrap;
+  }
+}
+
+/* Loading placeholders that hold the shape of the content they stand in for. */
+.skeleton,
+.skeleton-dark {
+  position: relative;
+  overflow: hidden;
+  background: #eef2f7;
+}
+.skeleton-dark { background: rgb(255 255 255 / 6%); }
+.skeleton::after,
+.skeleton-dark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 65%), transparent);
+  animation: shimmer 1.4s infinite;
+}
+.skeleton-dark::after { background: linear-gradient(90deg, transparent, rgb(255 255 255 / 8%), transparent); }
+
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+@keyframes pop { from { opacity: 0; transform: scale(.97) translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes slide-down { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes slide-left { from { transform: translateX(100%); } to { transform: none; } }
+
+.animate-pop { animation: pop .14s var(--ease); }
+.animate-slide-up { animation: slide-up .18s var(--ease); }
+.animate-slide-down { animation: slide-down .16s var(--ease); }
+.animate-slide-left { animation: slide-left .2s var(--ease); }
+
+/* Respect users who have asked the OS to reduce motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

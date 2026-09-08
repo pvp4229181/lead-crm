@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { CalendarDays, Frown, Meh, Smile, Trash2 } from 'lucide-react';
 import { api, date, money } from '../../lib/api';
+import { useToast } from '../../components/Toast';
 import type { Activity, Metadata, WAConversation, WALead } from '../../lib/types';
 
 const TEMP_TONE: Record<string, string> = { Cold: 'bg-slate-100 text-slate-600', Warm: 'bg-amber-100 text-amber-700', Hot: 'bg-orange-100 text-orange-700', 'Very Hot': 'bg-red-100 text-red-700' };
@@ -10,8 +12,11 @@ const SENTIMENT_ICON = { positive: <Smile size={14} className="text-emerald-500"
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div><div className="mt-0.5 text-xs text-slate-700">{children}</div></div>; }
 function Chips({ items }: { items: string[] }) { return items.length ? <div className="flex flex-wrap gap-1">{items.map((x, i) => <span key={i} className="badge bg-slate-100 text-slate-600">{x}</span>)}</div> : <span className="text-slate-400">—</span>; }
 
-export function LeadPanel({ conversation }: { conversation: WAConversation }) {
+// `embedded` renders the body alone, for the drawer the inbox opens below xl where the
+// panel has no column of its own.
+export function LeadPanel({ conversation, embedded }: { conversation: WAConversation; embedded?: boolean }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const lead = conversation.lead;
   const meta = useQuery({ queryKey: ['metadata'], queryFn: () => api<Metadata>('/metadata') });
   const meetings = useQuery({ queryKey: ['wa-meetings', conversation._id], queryFn: () => api<Activity[]>(`/whatsapp/conversations/${conversation._id}/meetings`), enabled: Boolean(lead) });
@@ -21,11 +26,13 @@ export function LeadPanel({ conversation }: { conversation: WAConversation }) {
 
   const saveLead = useMutation({
     mutationFn: (body: Record<string, unknown>) => api<WALead>(`/leads/${lead!._id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['wa-conversations'] }); qc.invalidateQueries({ queryKey: ['wa-conversation', conversation._id] }); },
+    onSuccess: () => { toast.success('Lead updated'); qc.invalidateQueries({ queryKey: ['wa-conversations'] }); qc.invalidateQueries({ queryKey: ['wa-conversation', conversation._id] }); },
+    onError: cause => toast.error(cause, 'Could not save that change.'),
   });
   const assign = useMutation({
     mutationFn: (assignedTo: string) => api(`/whatsapp/conversations/${conversation._id}`, { method: 'PATCH', body: JSON.stringify({ assignedTo: assignedTo || null }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-conversations'] }),
+    onSuccess: () => { toast.success('Conversation reassigned'); qc.invalidateQueries({ queryKey: ['wa-conversations'] }); },
+    onError: cause => toast.error(cause, 'Could not reassign this conversation.'),
   });
   const deleteMeeting = useMutation({
     mutationFn: (meetingId: string) => api(`/whatsapp/conversations/${conversation._id}/meetings/${meetingId}`, { method: 'DELETE' }),
@@ -38,14 +45,15 @@ export function LeadPanel({ conversation }: { conversation: WAConversation }) {
     onError: (cause: any) => setMeetingError(cause?.message ?? 'Could not delete the scheduled meeting.'),
   });
 
-  if (!lead) return <div className="w-80 shrink-0 border-l bg-white p-4 text-xs text-slate-400">No lead linked to this conversation yet.</div>;
+  const shell = embedded ? 'h-full w-full overflow-y-auto bg-white p-4' : 'h-full min-h-0 w-full overflow-y-auto border-l bg-white p-4';
+  if (!lead) return <div className={`${shell} text-xs text-slate-400`}>No lead linked to this conversation yet.</div>;
 
   const commit = (field: keyof WALead) => { const value = edit[field]; if (value === undefined) return; saveLead.mutate({ [field]: value }); };
 
-  return <div className="h-full min-h-0 w-80 shrink-0 overflow-y-auto border-l bg-white p-4">
+  return <div className={`scrollbar-thin ${shell}`}>
     <div className="mb-3 flex items-center justify-between">
-      <h3 className="text-sm font-semibold">Lead details</h3>
-      <span className={`badge ${TEMP_TONE[lead.leadTemperature]}`}>{lead.leadTemperature} · {lead.leadScore}</span>
+      {!embedded && <h3 className="text-sm font-semibold">Lead details</h3>}
+      <span className={`badge ml-auto ${TEMP_TONE[lead.leadTemperature]}`}>{lead.leadTemperature} · {lead.leadScore}</span>
     </div>
     <div className="mb-4 rounded-lg border border-sky-100 bg-sky-50/60 p-3">
       <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-sky-800"><CalendarDays size={14} />Scheduled meetings</div>
@@ -85,7 +93,7 @@ export function LeadPanel({ conversation }: { conversation: WAConversation }) {
       <Field label="AI summary"><p className="leading-4">{lead.aiSummary || '—'}</p></Field>
       <Field label="Recommended next action"><p className="leading-4">{lead.recommendedNextAction || '—'}</p></Field>
       {lead.lastAiAnalysisAt && <Field label="Last AI analysis">{date(lead.lastAiAnalysisAt)}</Field>}
-      <a className="btn mt-2 block text-center" href={`/leads`}>Open in Leads</a>
+      <Link className="btn mt-2 flex justify-center" to="/leads">Open in Leads</Link>
     </div>
   </div>;
 }
