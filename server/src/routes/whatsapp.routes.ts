@@ -55,6 +55,7 @@ whatsappApi.get('/whatsapp/dashboard/metrics', asyncHandler(wa.dashboardMetrics)
 
 whatsappApi.get('/whatsapp/ai-settings', managerUp, asyncHandler(ai.getAiSettings));
 whatsappApi.patch('/whatsapp/ai-settings', managerUp, asyncHandler(ai.updateAiSettings));
+whatsappApi.post('/whatsapp/ai-settings/recommended-template', managerUp, asyncHandler(ai.applyRecommendedTemplate));
 whatsappApi.get('/whatsapp/accounts', managerUp, asyncHandler(ai.listAccounts));
 whatsappApi.post('/whatsapp/accounts', adminOnly, asyncHandler(ai.createAccount));
 whatsappApi.patch('/whatsapp/accounts/:id', adminOnly, asyncHandler(ai.updateAccount));

@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { WhatsAppAccount } from '../models/index.js';
-import { getActiveAIConfig } from '../services/ai.service.js';
+import { getActiveAIConfig, replaceWithRecommendedAgentTemplate } from '../services/ai.service.js';
 import { aiConfigurationInput, accountInput } from '../validators/whatsapp.validators.js';
 import { ApiError } from '../utils/http.js';
 
@@ -14,6 +14,10 @@ export async function updateAiSettings(req: Request, res: Response) {
   Object.assign(config, input);
   await config.save();
   res.json(config);
+}
+
+export async function applyRecommendedTemplate(_req: Request, res: Response) {
+  res.json(await replaceWithRecommendedAgentTemplate());
 }
 
 export async function listAccounts(_req: Request, res: Response) {

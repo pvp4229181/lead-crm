@@ -94,7 +94,15 @@ const greetLead = await models.Lead.create({ title: 'Greeting target', contactNa
 
 // Disabled by default: adding a lead must not message anyone unexpectedly.
 await models.AIConfiguration.deleteMany({});
-await models.AIConfiguration.create({ autoGreetNewLeads: false, active: true, provider: 'mock' });
+await models.AIConfiguration.create({ autoGreetNewLeads: false, active: true, provider: 'mock', companyName: 'Configured Company', welcomeMessage: 'Old welcome message' });
+const { getActiveAIConfig, replaceWithRecommendedAgentTemplate } = await import('../dist/services/ai.service.js');
+const migratedAgent = await getActiveAIConfig();
+ok('old AI template is replaced automatically', (migratedAgent.agentTemplateVersion ?? 0) >= 2 && migratedAgent.welcomeMessage !== 'Old welcome message');
+ok('recommended template includes the complete qualification flow', migratedAgent.qualificationQuestions.length >= 8, migratedAgent.qualificationQuestions);
+migratedAgent.welcomeMessage = 'Temporary custom welcome'; await migratedAgent.save();
+const resetAgent = await replaceWithRecommendedAgentTemplate();
+ok('recommended template can be reapplied', resetAgent.welcomeMessage !== 'Temporary custom welcome');
+ok('replacing the template preserves company identity', resetAgent.companyName === 'Configured Company', resetAgent.companyName);
 ok('no greeting sent while the feature is off', (await greetNewLead(greetLead._id)) === null);
 
 // Enabled, but pointing at an unapproved template — must refuse rather than fail the send.

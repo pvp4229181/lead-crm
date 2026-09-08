@@ -1,6 +1,7 @@
 import { AIConfiguration } from '../models/index.js';
 import { getAIProvider, type ChatTurn, type ConversationAnalysis } from '../ai/index.js';
 import { buildSystemPrompt } from '../ai/prompts.js';
+import { RECOMMENDED_AGENT_TEMPLATE, RECOMMENDED_AGENT_TEMPLATE_VERSION } from '../ai/agent-template.js';
 import { retrieveKnowledge } from './knowledge.service.js';
 
 // The stored configuration is authoritative once it exists (admins edit it in
@@ -15,15 +16,28 @@ const envProvider = () => {
 
 export async function getActiveAIConfig() {
   const existing = await AIConfiguration.findOne({ active: true }).sort('-createdAt');
-  if (existing) return existing;
+  if (existing) {
+    if ((existing.agentTemplateVersion ?? 0) < RECOMMENDED_AGENT_TEMPLATE_VERSION) {
+      Object.assign(existing, RECOMMENDED_AGENT_TEMPLATE, { agentTemplateVersion: RECOMMENDED_AGENT_TEMPLATE_VERSION });
+      existing.customTone = undefined;
+      await existing.save();
+    }
+    return existing;
+  }
   return AIConfiguration.create({
-    agentName: 'Aria', agentRole: 'Sales Assistant', companyName: 'Our Company',
-    welcomeMessage: "Hi! Thanks for reaching out. How can I help you today?",
-    tone: 'Friendly', language: 'auto',
-    qualificationQuestions: ['What are you mainly looking for?', 'What budget range did you have in mind?', 'When would you like to get started?'],
+    agentName: 'Aria', companyName: 'Our Company', ...RECOMMENDED_AGENT_TEMPLATE,
+    agentTemplateVersion: RECOMMENDED_AGENT_TEMPLATE_VERSION,
     provider: envProvider(), aiModel: process.env.AI_MODEL || undefined,
-    creativity: 0.4, maxResponseLength: 700, maxAiMessagesBeforeEscalation: 20, globalAiEnabled: true, active: true,
+    globalAiEnabled: true, active: true,
   });
+}
+
+export async function replaceWithRecommendedAgentTemplate() {
+  const config = await getActiveAIConfig();
+  Object.assign(config, RECOMMENDED_AGENT_TEMPLATE, { agentTemplateVersion: RECOMMENDED_AGENT_TEMPLATE_VERSION });
+  config.customTone = undefined;
+  await config.save();
+  return config;
 }
 
 export function isWithinBusinessHours(config: Awaited<ReturnType<typeof getActiveAIConfig>>, now = new Date()): boolean {

@@ -107,6 +107,7 @@ const whatsAppAccountSchema = new Schema({
 const businessHoursSchema = { timezone: { type: String, default: 'Asia/Kolkata' }, days: [{ day: { type: Number, min: 0, max: 6 }, start: String, end: String, enabled: { type: Boolean, default: true } }] };
 const aiConfigurationSchema = new Schema({
   waAccount: ref('WhatsAppAccount'),
+  agentTemplateVersion: { type: Number, default: 0 },
   agentName: { type: String, default: 'Aria' },
   agentRole: { type: String, default: 'Sales Assistant' },
   companyName: { type: String, default: 'Our Company' },

@@ -1,3 +1,5 @@
+import { SALES_AGENT_PLAYBOOK } from './agent-template.js';
+
 // Shared prompt text so every provider analyzes conversations the same way.
 
 export const ANALYSIS_INSTRUCTIONS = `You are a CRM analyst. Read the WhatsApp sales conversation transcript below and extract structured facts about the customer. Only use information the customer actually stated or clearly implied — never invent values. Omit a field (or use an empty value) if it was not discussed.
@@ -39,7 +41,7 @@ export function buildSystemPrompt(config: {
     `You are ${config.agentName}, a ${config.agentRole} at ${config.companyName}.`,
     config.companyDescription ? `About the company: ${config.companyDescription}` : '',
     toneLine,
-    'You are chatting with a customer over WhatsApp. Behave like a skilled, natural human sales representative — never like a form or a bot.',
+    'You are chatting with a customer over WhatsApp. Be transparent that you are an AI assistant when relevant, while communicating naturally rather than sounding like a form.',
     'Rules you must always follow:',
     '- Never invent prices, features, policies, or promises that are not in the knowledge base below.',
     '- If you do not know something, say so naturally and offer to have a team member follow up — do not guess.',
@@ -47,6 +49,7 @@ export function buildSystemPrompt(config: {
     '- Never ask for passwords, OTPs, card numbers, or other sensitive credentials.',
     "- Ask at most one qualifying question per message. Don't ask something the customer already answered.",
     '- Keep replies concise and conversational — a few sentences, not a form. Answer the customer\'s question before asking anything new.',
+    SALES_AGENT_PLAYBOOK,
     '- Qualification questions to weave in naturally over the course of the conversation (never all at once): ' + (config.qualificationQuestions.join('; ') || 'requirements, budget, timeline, and decision-maker status'),
     config.language === 'auto' ? 'Detect whether the customer is writing in English, Hindi, or Hinglish, and reply in that same language/style for the rest of the conversation.' : `Reply in ${config.language === 'hinglish' ? 'Hinglish (Roman-script mixed Hindi/English)' : config.language === 'hi' ? 'Hindi' : 'English'}.`,
     '',

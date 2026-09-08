@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { AIConfig, WATemplate, WhatsAppAccountRow } from '../../lib/types';
 import { PageHeader } from '../../components/Shell';
@@ -35,11 +35,20 @@ function AgentConfig() {
   const [form, setForm] = useState<AIConfig | null>(null);
   const [question, setQuestion] = useState('');
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
   useEffect(() => { if (config.data && !form) setForm(config.data); }, [config.data, form]);
 
   const save = useMutation({
     mutationFn: (body: Partial<AIConfig>) => api<AIConfig>('/whatsapp/ai-settings', { method: 'PATCH', body: JSON.stringify(body) }),
+    onMutate: () => setError(''),
     onSuccess: data => { setForm(data); qc.setQueryData(['wa-ai-settings'], data); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    onError: cause => setError(cause instanceof Error ? cause.message : 'Could not save the AI settings.'),
+  });
+  const applyTemplate = useMutation({
+    mutationFn: () => api<AIConfig>('/whatsapp/ai-settings/recommended-template', { method: 'POST' }),
+    onMutate: () => setError(''),
+    onSuccess: data => { setForm(data); qc.setQueryData(['wa-ai-settings'], data); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    onError: cause => setError(cause instanceof Error ? cause.message : 'Could not apply the recommended template.'),
   });
 
   if (config.isLoading || !form) return <Loading />;
@@ -56,6 +65,12 @@ function AgentConfig() {
   const setRule = (key: keyof AIConfig['escalationRules'], value: unknown) => set('escalationRules', { ...rules, [key]: value });
 
   return <div className="max-w-3xl space-y-5">
+    <section className="panel flex flex-wrap items-center gap-3 border-sky-200 bg-sky-50 p-4">
+      <span className="rounded-full bg-white p-2 text-sky-600"><Sparkles size={18} /></span>
+      <div className="min-w-64 flex-1"><h3 className="text-sm font-semibold">Complete AI sales template</h3><p className="text-xs text-slate-600">Covers welcome, discovery, qualification, pricing, objections, meetings, closing, and safe human handoff. Applying it replaces the previous messages and questions while preserving your company, business hours, provider, account, and Meta greeting selection.</p></div>
+      <Button disabled={applyTemplate.isPending} onClick={() => confirm('Replace the current AI messages and qualification flow with the recommended sales template?') && applyTemplate.mutate()}><Sparkles size={14} />{applyTemplate.isPending ? 'Applying…' : 'Apply recommended template'}</Button>
+    </section>
+    {error && <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
     <section className="panel space-y-3 p-4">
       <h3 className="text-sm font-semibold">Identity</h3>
       <div className="grid grid-cols-2 gap-3">
