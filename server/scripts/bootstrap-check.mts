@@ -119,22 +119,35 @@ const { deleteConversation, deleteMessage, listMeetings, deleteMeeting } = await
 const resStub = () => { const r: any = { code: 0, payload: null, status(c: number) { r.code = c; return r; }, end() { return r; }, json(data: any) { r.payload = data; return r; } }; return r; };
 const adminUser = { _id: user._id, role: { name: 'Administrator' } };
 
-// --- Three-state user access ------------------------------------------------
-const { updateUserAccess } = await import('../dist/controllers/admin.controller.js');
-const statusUser = await models.User.create({ name: 'Status User', email: 'status@test.local', password: 'x', role: role._id, active: true, accountStatus: 'active' });
-await updateUserAccess({ user: adminUser, params: { id: String(statusUser._id) }, body: { accountStatus: 'inactive' } } as any, resStub());
-const inactiveUser = await models.User.findById(statusUser._id);
-ok('user can be changed to inactive', inactiveUser?.accountStatus === 'inactive' && inactiveUser.active === false, inactiveUser);
-await updateUserAccess({ user: adminUser, params: { id: String(statusUser._id) }, body: { accountStatus: 'disabled' } } as any, resStub());
-const disabledUser = await models.User.findById(statusUser._id);
-ok('user can be disabled', disabledUser?.accountStatus === 'disabled' && disabledUser.active === false, disabledUser);
-await updateUserAccess({ user: adminUser, params: { id: String(statusUser._id) }, body: { accountStatus: 'active' } } as any, resStub());
-const reactivatedUser = await models.User.findById(statusUser._id);
-ok('user can be reactivated', reactivatedUser?.accountStatus === 'active' && reactivatedUser.active === true, reactivatedUser);
-let selfDeactivationDenied = false;
-try { await updateUserAccess({ user: adminUser, params: { id: String(user._id) }, body: { accountStatus: 'disabled' } } as any, resStub()); }
-catch (error: any) { selfDeactivationDenied = error?.status === 409; }
-ok('administrator cannot disable their own account', selfDeactivationDenied);
+// --- Suspending and deleting a user -----------------------------------------
+const { updateUserAccess, deleteUser } = await import('../dist/controllers/admin.controller.js');
+const removableUser = await models.User.create({ name: 'Remove Me', email: 'remove@test.local', password: 'x', role: role._id, active: true });
+await updateUserAccess({ user: adminUser, params: { id: String(removableUser._id) }, body: { active: false } } as any, resStub());
+ok('user can be suspended', (await models.User.findById(removableUser._id))?.active === false);
+await updateUserAccess({ user: adminUser, params: { id: String(removableUser._id) }, body: { active: true } } as any, resStub());
+ok('suspended user can be reactivated', (await models.User.findById(removableUser._id))?.active === true);
+
+const assignedCompany = await models.Company.create({ name: 'Deletion assignment', salesperson: removableUser._id });
+const assignedActivity = await models.Activity.create({
+  activityType: (await models.ActivityType.findOne())!._id, dueDate: new Date(), assignedTo: removableUser._id,
+  summary: 'Preserve this historical activity', relatedModel: 'Lead', relatedId: target._id, createdBy: user._id,
+});
+const deletionTeam = await models.SalesTeam.create({ name: 'Deletion members', teamLeader: user._id, members: [removableUser._id] });
+await models.Notification.create({ user: removableUser._id, title: 'Private notification', type: 'test' });
+await models.SavedFilter.create({ user: removableUser._id, name: 'Private filter', resource: 'leads', query: {} });
+const deletionRes = resStub();
+await deleteUser({ user: adminUser, params: { id: String(removableUser._id) } } as any, deletionRes);
+const anonymizedUser = await models.User.findById(removableUser._id);
+ok('deleting a user responds 204', deletionRes.code === 204, deletionRes.code);
+ok('deleted user is anonymized and cannot sign in', anonymizedUser?.name === 'Deleted User' && anonymizedUser.active === false && Boolean(anonymizedUser.deletedAt), anonymizedUser);
+ok('optional assignments are cleared', !(await models.Company.findById(assignedCompany._id))?.salesperson);
+ok('required activity assignment is safely reassigned', String((await models.Activity.findById(assignedActivity._id))?.assignedTo) !== String(removableUser._id));
+ok('deleted user is removed from team membership', !(await models.SalesTeam.findById(deletionTeam._id))?.members.some((id: any) => String(id) === String(removableUser._id)));
+ok('personal user data is removed', !await models.Notification.exists({ user: removableUser._id }) && !await models.SavedFilter.exists({ user: removableUser._id }));
+let selfDeletionDenied = false;
+try { await deleteUser({ user: adminUser, params: { id: String(user._id) } } as any, resStub()); }
+catch (error: any) { selfDeletionDenied = error?.status === 409; }
+ok('administrator cannot delete their own account', selfDeletionDenied);
 
 // --- Listing and deleting a scheduled meeting ------------------------------
 const meetingType = await models.ActivityType.findOne({ name: 'Meeting' });

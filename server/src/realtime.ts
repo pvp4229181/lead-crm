@@ -18,8 +18,8 @@ export function attachRealtime(server: HttpServer) {
       const token = raw ?? cookieToken;
       if (!token) return next(new Error('Authentication required'));
       const payload = jwt.verify(token, process.env.JWT_SECRET!) as { sub: string };
-      const user = await User.findById(payload.sub).select('_id role active accountStatus').populate('role', 'name');
-      if (!user?.active || user.accountStatus !== 'active') return next(new Error('Authentication required'));
+      const user = await User.findById(payload.sub).select('_id role active deletedAt').populate('role', 'name');
+      if (!user?.active || user.deletedAt) return next(new Error('Authentication required'));
       (socket.data as any).userId = String(user._id);
       (socket.data as any).role = (user.role as any)?.name;
       next();

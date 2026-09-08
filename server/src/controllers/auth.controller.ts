@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import bcrypt from 'bcryptjs'; import jwt from 'jsonwebtoken'; import mongoose from 'mongoose';
 import { Role, User } from '../models/index.js'; import { ApiError } from '../utils/http.js';
 const cookieOptions = () => ({ httpOnly:true, secure:process.env.NODE_ENV==='production', sameSite:'lax' as const, maxAge:8*60*60*1000 });
-export async function login(req:Request,res:Response){const {email,password}=req.body;if(typeof email!=='string'||typeof password!=='string')throw new ApiError(422,'Email and password are required');const user=await User.findOne({email:email.toLowerCase()}).select('+password').populate('role');if(!user||!await bcrypt.compare(password,user.password))throw new ApiError(401,'Invalid email or password');if(!user.active||user.accountStatus!=='active')throw new ApiError(403,user.accountStatus==='disabled'?'Account disabled. Contact an administrator.':'Account inactive. Contact an administrator.');const token=jwt.sign({sub:String(user._id)},process.env.JWT_SECRET!,{expiresIn:(process.env.JWT_EXPIRES_IN??'8h') as any});res.cookie('orbit_token',token,cookieOptions()).json({user:safe(user)});}
+export async function login(req:Request,res:Response){const {email,password}=req.body;if(typeof email!=='string'||typeof password!=='string')throw new ApiError(422,'Email and password are required');const user=await User.findOne({email:email.toLowerCase(),active:true,deletedAt:{$exists:false}}).select('+password').populate('role');if(!user||!await bcrypt.compare(password,user.password))throw new ApiError(401,'Invalid email or password');const token=jwt.sign({sub:String(user._id)},process.env.JWT_SECRET!,{expiresIn:(process.env.JWT_EXPIRES_IN??'8h') as any});res.cookie('orbit_token',token,cookieOptions()).json({user:safe(user)});}
 export async function signupAdmin(req:Request,res:Response){
   const {name,email,password,confirmPassword}=req.body;
   if(typeof name!=='string'||name.trim().length<2)throw new ApiError(422,'Name must contain at least 2 characters');
@@ -14,7 +14,7 @@ export async function signupAdmin(req:Request,res:Response){
   try{await lockCollection.insertOne({_id:'initial-admin' as any,createdAt:new Date()});}catch{throw new ApiError(409,'Workspace initialization is already in progress');}
   try{
     const role=await Role.findOneAndUpdate({name:'Administrator'},{$setOnInsert:{permissions:['*'],active:true}},{new:true,upsert:true});
-    const user=await User.create({name:name.trim(),email:email.toLowerCase(),password:await bcrypt.hash(password,12),role:role._id,active:true,accountStatus:'active'});
+    const user=await User.create({name:name.trim(),email:email.toLowerCase(),password:await bcrypt.hash(password,12),role:role._id,active:true});
     res.status(201).json({message:'Administrator account created',user:{_id:user._id,name:user.name,email:user.email}});
   }catch(error){await lockCollection.deleteOne({_id:'initial-admin' as any});throw error;}
 }

@@ -28,6 +28,7 @@ api.delete('/admin/roles/:id', authorize('Administrator'), asyncHandler(admin.de
 api.get('/admin/users', authorize('Administrator', 'Sales Manager'), asyncHandler(admin.listUsers));
 api.post('/admin/users', authorize('Administrator'), asyncHandler(admin.createUser));
 api.patch('/admin/users/:id', authorize('Administrator', 'Sales Manager'), asyncHandler(admin.updateUserAccess));
+api.delete('/admin/users/:id', authorize('Administrator'), asyncHandler(admin.deleteUser));
 api.get('/admin/invitations', authorize('Administrator'), asyncHandler(invitation.listInvitations));
 api.post('/admin/invitations', authorize('Administrator'), asyncHandler(invitation.createInvitation));
 api.post('/admin/invitations/:id/resend', authorize('Administrator'), asyncHandler(invitation.resendInvitation));

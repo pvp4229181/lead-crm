@@ -65,7 +65,7 @@ export async function acceptInvitation(req: Request, res: Response) {
       const invitation = await UserInvitation.findOne({ tokenHash, status: 'pending', expiresAt: { $gt: new Date() } }).session(session);
       if (!invitation) throw new ApiError(404, 'This invitation is invalid or has expired');
       if (await User.exists({ email: invitation.email }).session(session)) throw new ApiError(409, 'An account already exists for this email');
-      const [created] = await User.create([{ name: invitation.name, email: invitation.email, password: await bcrypt.hash(password, 12), role: invitation.role, active: true, accountStatus: 'active' }], { session });
+      const [created] = await User.create([{ name: invitation.name, email: invitation.email, password: await bcrypt.hash(password, 12), role: invitation.role, active: true }], { session });
       invitation.status = 'accepted'; invitation.acceptedAt = new Date(); await invitation.save({ session });
       return created!;
     });

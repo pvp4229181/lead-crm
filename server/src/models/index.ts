@@ -3,10 +3,9 @@ import mongoose, { Schema, type HydratedDocument } from 'mongoose';
 const ref = (model: string, required = false) => ({ type: Schema.Types.ObjectId, ref: model, required });
 const namedSchema = (extra: Record<string, unknown> = {}) => new Schema({ name: { type: String, required: true, trim: true, unique: true }, active: { type: Boolean, default: true }, ...extra }, { timestamps: true });
 
-export type UserAccountStatus = 'active' | 'inactive' | 'disabled';
-export interface IUser { _id: mongoose.Types.ObjectId; name: string; email: string; password: string; avatar?: string; role: mongoose.Types.ObjectId | { name: string; permissions: string[] }; active: boolean; accountStatus: UserAccountStatus; }
+export interface IUser { _id: mongoose.Types.ObjectId; name: string; email: string; password: string; avatar?: string; role: mongoose.Types.ObjectId | { name: string; permissions: string[] }; active: boolean; deletedAt?: Date; }
 const roleSchema = namedSchema({ permissions: [{ type: String, required: true }] });
-const userSchema = new Schema<IUser>({ name: { type: String, required: true, trim: true }, email: { type: String, required: true, unique: true, lowercase: true, trim: true }, password: { type: String, required: true, select: false }, avatar: String, role: ref('Role', true), active: { type: Boolean, default: true }, accountStatus: { type: String, enum: ['active', 'inactive', 'disabled'], default: 'active' } }, { timestamps: true });
+const userSchema = new Schema<IUser>({ name: { type: String, required: true, trim: true }, email: { type: String, required: true, unique: true, lowercase: true, trim: true }, password: { type: String, required: true, select: false }, avatar: String, role: ref('Role', true), active: { type: Boolean, default: true }, deletedAt: Date }, { timestamps: true });
 
 const pipelineStageSchema = namedSchema({ sequence: { type: Number, required: true, default: 0 }, probability: { type: Number, min: 0, max: 100, default: 10 }, folded: { type: Boolean, default: false }, isWon: { type: Boolean, default: false }, color: { type: String, default: '#64748b' } });
 pipelineStageSchema.index({ sequence: 1 });
