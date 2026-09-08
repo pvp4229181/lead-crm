@@ -6,6 +6,7 @@ import * as auth from '../controllers/auth.controller.js';
 import * as crm from '../controllers/crm.controller.js';
 import * as admin from '../controllers/admin.controller.js';
 import * as invitation from '../controllers/invitation.controller.js';
+import * as notification from '../controllers/notification.controller.js';
 import { Activity, Company, Contact, Opportunity, TimelineEvent, WhatsAppConversation } from '../models/index.js';
 import { whatsappApi, whatsappWebhook } from './whatsapp.routes.js';
 
@@ -116,7 +117,5 @@ api.delete('/bulk/:resource', authorize('Administrator'), asyncHandler(async (re
   res.json({ deleted: outcome.deletedCount ?? 0, cleared });
 }));
 
-api.post('/notifications/read-all', asyncHandler(async (req, res) => {
-  await crm.models.notifications.updateMany({ user: req.user!._id, read: false }, { read: true });
-  res.json({ success: true });
-}));
+api.post('/notifications/read-all', asyncHandler(notification.markAllRead));
+api.delete('/notifications', asyncHandler(notification.clearAll));

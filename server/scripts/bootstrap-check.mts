@@ -170,6 +170,20 @@ try { await deleteUser({ user: adminUser, params: { id: String(user._id) } } as 
 catch (error: any) { selfDeletionDenied = error?.status === 409; }
 ok('administrator cannot delete their own account', selfDeletionDenied);
 
+// --- Clearing notifications -------------------------------------------------
+const otherUser = await models.User.create({ name: 'Other User', email: 'other@test.local', password: 'x', role: role._id, active: true });
+await models.Notification.create([
+  { user: user._id, title: 'Admin one', type: 'test' },
+  { user: user._id, title: 'Admin two', type: 'test' },
+  { user: otherUser._id, title: 'Other user notification', type: 'test' },
+]);
+const { clearAll: clearAllNotifications } = await import('../dist/controllers/notification.controller.js');
+const clearNotificationsRes = resStub();
+await clearAllNotifications({ user: adminUser } as any, clearNotificationsRes);
+ok('clear all reports the number of removed notifications', clearNotificationsRes.payload?.deleted === 2, clearNotificationsRes.payload);
+ok('clear all removes every notification owned by the current user', !await models.Notification.exists({ user: user._id }));
+ok('clear all preserves notifications belonging to other users', Boolean(await models.Notification.exists({ user: otherUser._id })));
+
 // --- Switching between human and AI control --------------------------------
 const takeoverRes = resStub();
 await takeover({ user: adminUser, params: { id: String(gConv!._id) } } as any, takeoverRes);
