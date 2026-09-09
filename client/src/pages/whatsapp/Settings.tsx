@@ -170,7 +170,7 @@ export function Accounts() {
   const [error, setError] = useState('');
   const create = useMutation({ mutationFn: () => api('/whatsapp/accounts', { method: 'POST', body: JSON.stringify(form) }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['wa-accounts'] }); setForm({ label: '', phoneNumberId: '', businessAccountId: '', displayPhoneNumber: '' }); }, onError: (e: any) => setError(e?.message ?? 'Could not save.') });
   const remove = useMutation({ mutationFn: (id: string) => api(`/whatsapp/accounts/${id}`, { method: 'DELETE' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-accounts'] }) });
-  const subscription = useQuery({ queryKey: ['wa-webhook-subscription'], queryFn: () => api<{ ok: boolean; configured: boolean; subscribed: boolean; apps?: { id?: string; name?: string }[]; error?: string }>('/whatsapp/webhook-subscription') });
+  const subscription = useQuery({ queryKey: ['wa-webhook-subscription'], queryFn: () => api<{ ok: boolean; configured: boolean; subscribed: boolean; apps?: { id?: string; name?: string }[]; phoneNumberMatched?: boolean; phoneNumbers?: { id?: string; displayPhoneNumber?: string; verifiedName?: string }[]; error?: string }>('/whatsapp/webhook-subscription') });
   const enableInbound = useMutation({
     mutationFn: () => api<{ subscribed: boolean }>('/whatsapp/webhook-subscription', { method: 'POST' }),
     onMutate: () => setError(''),
@@ -186,6 +186,7 @@ export function Accounts() {
         {!subscription.data?.subscribed && <Button className="h-8" disabled={enableInbound.isPending || subscription.isLoading} onClick={() => enableInbound.mutate()}>{enableInbound.isPending ? 'Enabling…' : 'Enable inbound messages'}</Button>}
       </div>
       {!subscription.isLoading && !subscription.data?.subscribed && <p className="mt-1">Callback verification alone is not enough. This subscribes the Meta app to the configured WhatsApp Business Account.</p>}
+      {subscription.data?.subscribed && subscription.data.phoneNumberMatched === false && <p className="mt-1 text-red-700">The configured Phone Number ID does not belong to this WhatsApp Business Account. Update the deployment environment with the matching WABA ID.</p>}
       {subscription.data?.error && <p className="mt-1 text-red-700">{subscription.data.error}</p>}
     </div>
     <div className="panel space-y-2 p-4">

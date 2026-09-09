@@ -20,6 +20,8 @@ export type WebhookSubscriptionResult = {
   configured: boolean;
   subscribed: boolean;
   apps?: { id?: string; name?: string }[];
+  phoneNumberMatched?: boolean;
+  phoneNumbers?: { id?: string; displayPhoneNumber?: string; verifiedName?: string }[];
   error?: string;
 };
 
@@ -77,7 +79,11 @@ export async function getWebhookSubscription(): Promise<WebhookSubscriptionResul
       id: item.whatsapp_business_api_data?.id,
       name: item.whatsapp_business_api_data?.name,
     }));
-    return { ok: true, configured: true, subscribed: apps.length > 0, apps };
+    const phoneResponse = await fetch(graphUrl(`${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name`), { headers: { Authorization: `Bearer ${token}` } });
+    const phoneJson: any = await phoneResponse.json().catch(() => ({}));
+    if (!phoneResponse.ok) return { ok: false, configured: true, subscribed: apps.length > 0, apps, error: describeGraphError(phoneJson?.error, phoneResponse.status) };
+    const phoneNumbers = (phoneJson.data ?? []).map((item: any) => ({ id: item.id, displayPhoneNumber: item.display_phone_number, verifiedName: item.verified_name }));
+    return { ok: true, configured: true, subscribed: apps.length > 0, apps, phoneNumbers, phoneNumberMatched: phoneNumbers.some((phone: any) => phone.id === process.env.WHATSAPP_PHONE_NUMBER_ID) };
   } catch (error: any) {
     return { ok: false, configured: true, subscribed: false, error: error?.message ?? 'Network error contacting WhatsApp API' };
   }
