@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { WhatsAppMessage } from '../models/index.js';
 import { processInboundMessage, type NormalizedInboundMessage } from '../pipeline/whatsapp.pipeline.js';
 import { emitToConversation } from '../realtime.js';
+import { getWebhookSubscription, subscribeWebhook } from '../services/whatsapp.service.js';
 
 // GET /api/webhooks/whatsapp — Meta's one-time subscription verification handshake.
 export function verifyWebhook(req: Request, res: Response) {
@@ -11,6 +12,30 @@ export function verifyWebhook(req: Request, res: Response) {
   const challenge = req.query['hub.challenge'];
   if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) return res.status(200).send(String(challenge ?? ''));
   return res.sendStatus(403);
+}
+
+function verifyOperatorToken(req: Request, res: Response): boolean {
+  const expected = process.env.WHATSAPP_VERIFY_TOKEN;
+  const supplied = req.header('x-whatsapp-verify-token');
+  if (!expected || supplied !== expected) {
+    res.sendStatus(403);
+    return false;
+  }
+  return true;
+}
+
+// Recovery endpoints for deployments where Meta's dashboard exposes callback
+// verification but not the WABA subscription control. They only read or enable the
+// configured WABA subscription and require the same server-side verification secret.
+export async function webhookSubscriptionStatus(req: Request, res: Response) {
+  if (!verifyOperatorToken(req, res)) return;
+  res.json(await getWebhookSubscription());
+}
+
+export async function enableWebhookSubscription(req: Request, res: Response) {
+  if (!verifyOperatorToken(req, res)) return;
+  const result = await subscribeWebhook();
+  res.status(result.ok ? 200 : 502).json(result);
 }
 
 // Verifies the X-Hub-Signature-256 header Meta signs every webhook POST with, using

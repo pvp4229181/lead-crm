@@ -5,7 +5,7 @@ import { asyncHandler } from '../utils/http.js';
 import * as wa from '../controllers/whatsapp.controller.js';
 import * as ai from '../controllers/whatsapp-ai.controller.js';
 import * as kb from '../controllers/whatsapp-knowledge.controller.js';
-import { verifyWebhook, verifySignature, receiveWebhook } from '../webhooks/whatsapp.webhook.js';
+import { verifyWebhook, verifySignature, receiveWebhook, webhookSubscriptionStatus, enableWebhookSubscription } from '../webhooks/whatsapp.webhook.js';
 import { runFollowUps } from '../automation/scheduler.service.js';
 
 // Mounted publicly (before requireAuth) — Meta calls these directly, authenticated
@@ -13,6 +13,8 @@ import { runFollowUps } from '../automation/scheduler.service.js';
 export const whatsappWebhook = Router();
 whatsappWebhook.get('/webhooks/whatsapp', verifyWebhook);
 whatsappWebhook.post('/webhooks/whatsapp', verifySignature, asyncHandler(receiveWebhook));
+whatsappWebhook.get('/webhooks/whatsapp/subscription', asyncHandler(webhookSubscriptionStatus));
+whatsappWebhook.post('/webhooks/whatsapp/subscription', asyncHandler(enableWebhookSubscription));
 
 // Vercel Cron (or any external scheduler) hits this with a shared secret instead of a
 // user session, since serverless functions can't host a persistent node-cron timer.
