@@ -90,7 +90,11 @@ export async function subscribeWebhook(): Promise<WebhookSubscriptionResult> {
   try {
     const response = await fetch(graphUrl(`${wabaId}/subscribed_apps`), {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      // Current Graph API versions allow selecting fields directly on the WABA
+      // subscription. Supplying this explicitly avoids dashboard/UI variants that
+      // verify the callback but never attach the messages field.
+      body: JSON.stringify({ subscribed_fields: ['messages'] }),
     });
     const json: any = await response.json().catch(() => ({}));
     if (!response.ok || json.success !== true) return { ok: false, configured: true, subscribed: false, error: describeGraphError(json?.error, response.status) };
