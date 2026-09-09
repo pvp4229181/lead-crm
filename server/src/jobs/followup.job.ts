@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { runFollowUps } from '../services/automation.service.js';
+import { runFollowUps } from '../automation/scheduler.service.js';
 
 // Only meaningful under a persistent process (local dev / traditional hosting via
 // server.ts). On Vercel serverless there is no long-lived process to hold this timer,
@@ -9,5 +9,5 @@ export function scheduleFollowUpJob() {
   cron.schedule('*/15 * * * *', () => {
     runFollowUps().catch(error => console.error('[followup job] failed', error));
   });
-  console.log('Follow-up automation job scheduled (every 15 minutes)');
+  console.log('ARIA automation scheduler running (every 15 minutes)');
 }

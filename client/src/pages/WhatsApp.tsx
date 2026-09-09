@@ -25,7 +25,7 @@ const time = (v?: string) => {
   const sameDay = new Date().toDateString() === at.toDateString();
   return new Intl.DateTimeFormat('en-US', sameDay ? { hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric' }).format(at);
 };
-const TEMP_DOT: Record<string, string> = { Cold: 'bg-slate-300', Warm: 'bg-amber-400', Hot: 'bg-orange-500', 'Very Hot': 'bg-red-500' };
+const TEMP_DOT: Record<string, string> = { Cold: 'bg-slate-300', Warm: 'bg-amber-400', Qualified: 'bg-orange-500', Hot: 'bg-red-500', 'Very Hot': 'bg-red-500' };
 
 function ConversationSkeleton() {
   return <div className="space-y-px">{Array.from({ length: 6 }, (_, index) => <div className="flex gap-2.5 border-b p-3" key={index}>
@@ -94,7 +94,7 @@ export default function WhatsApp() {
         {!live && <span title="Live updates unavailable — falling back to polling" className="text-amber-500"><WifiOff size={13}/></span>}
         <div className="ml-auto flex items-center gap-1">
           <button className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800" title="Start a conversation with a lead" onClick={() => setComposing(true)}><PenSquare size={16}/></button>
-          {canManage && <Link to="/whatsapp/settings" className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800" title="WhatsApp AI settings"><SettingsIcon size={16}/></Link>}
+          {canManage && <Link to="/whatsapp/automation" className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800" title="WhatsApp AI settings"><SettingsIcon size={16}/></Link>}
         </div>
       </div>
 

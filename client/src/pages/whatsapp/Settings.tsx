@@ -3,31 +3,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { AIConfig, WATemplate, WhatsAppAccountRow } from '../../lib/types';
-import { PageHeader } from '../../components/Shell';
 import { Button, Empty, Loading, RowMenu } from '../../components/ui';
-import Knowledge from './Knowledge';
-import { Templates, Campaigns } from './TemplatesCampaigns';
 
-const TABS = ['AI Agent', 'Knowledge Base', 'Templates', 'Campaigns', 'Accounts'] as const;
-
-export default function WhatsAppSettings() {
-  const [tab, setTab] = useState<typeof TABS[number]>('AI Agent');
-  return <>
-    <PageHeader title="WhatsApp AI Agent" subtitle="Configure how the AI sales agent behaves, what it knows, and who it hands off to." backTo="/whatsapp" backLabel="Back to inbox" />
-    <div className="border-b bg-white px-4"><nav className="flex gap-1">{TABS.map(t => <button key={t} className={`border-b-2 px-3 py-2.5 text-xs font-semibold ${tab === t ? 'border-[#0ea5e9] text-[#0284c7]' : 'border-transparent text-slate-500 hover:text-slate-800'}`} onClick={() => setTab(t)}>{t}</button>)}</nav></div>
-    <div className="p-4">
-      {tab === 'AI Agent' && <AgentConfig />}
-      {tab === 'Knowledge Base' && <Knowledge />}
-      {tab === 'Templates' && <Templates />}
-      {tab === 'Campaigns' && <Campaigns />}
-      {tab === 'Accounts' && <Accounts />}
-    </div>
-  </>;
-}
+// Behaviour, scoring and connection settings for ARIA. Customer-facing wording is not here:
+// it lives in the automation templates, so this screen can never disagree with what is
+// actually sent. Rendered as the "AI Settings" and "Accounts" tabs of WhatsApp Automation.
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function AgentConfig() {
+export function AgentConfig() {
   const qc = useQueryClient();
   const config = useQuery({ queryKey: ['wa-ai-settings'], queryFn: () => api<AIConfig>('/whatsapp/ai-settings') });
   const templates = useQuery({ queryKey: ['wa-templates'], queryFn: () => api<WATemplate[]>('/whatsapp/templates') });
@@ -62,13 +46,14 @@ function AgentConfig() {
     set('businessHours', { timezone: form.businessHours?.timezone ?? 'Asia/Kolkata', days: nextDays });
   };
   const rules = form.escalationRules;
+  const scoring = form.leadScoring ?? ({} as AIConfig['leadScoring']);
   const setRule = (key: keyof AIConfig['escalationRules'], value: unknown) => set('escalationRules', { ...rules, [key]: value });
 
   return <div className="max-w-3xl space-y-5">
     <section className="panel flex flex-wrap items-center gap-3 border-sky-200 bg-sky-50 p-4">
       <span className="rounded-full bg-white p-2 text-sky-600"><Sparkles size={18} /></span>
-      <div className="min-w-64 flex-1"><h3 className="text-sm font-semibold">Complete AI sales template</h3><p className="text-xs text-slate-600">Covers welcome, discovery, qualification, pricing, objections, meetings, closing, and safe human handoff. Applying it replaces the previous messages and questions while preserving your company, business hours, provider, account, and Meta greeting selection.</p></div>
-      <Button disabled={applyTemplate.isPending} onClick={() => confirm('Replace the current AI messages and qualification flow with the recommended sales template?') && applyTemplate.mutate()}><Sparkles size={14} />{applyTemplate.isPending ? 'Applying…' : 'Apply recommended template'}</Button>
+      <div className="min-w-64 flex-1"><h3 className="text-sm font-semibold">Recommended ARIA behaviour</h3><p className="text-xs text-slate-600">Resets the persona, qualification questions and escalation thresholds to the recommended sales configuration. Your company details, business hours, provider, connected account and every automation template are left untouched — customer-facing wording is edited on the Templates tab.</p></div>
+      <Button disabled={applyTemplate.isPending} onClick={() => confirm('Reset the persona, qualification questions and escalation rules to the recommended configuration?') && applyTemplate.mutate()}><Sparkles size={14} />{applyTemplate.isPending ? 'Applying…' : 'Apply recommended behaviour'}</Button>
     </section>
     {error && <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
     <section className="panel space-y-3 p-4">
@@ -81,7 +66,6 @@ function AgentConfig() {
       </div>
       {form.tone === 'Custom' && <label><span className="label">Custom tone instructions</span><input className="field" value={form.customTone ?? ''} onChange={e => set('customTone', e.target.value)} /></label>}
       <label><span className="label">Company description</span><textarea className="field" rows={2} value={form.companyDescription ?? ''} onChange={e => set('companyDescription', e.target.value)} /></label>
-      <label><span className="label">Welcome message</span><textarea className="field" rows={2} value={form.welcomeMessage} onChange={e => set('welcomeMessage', e.target.value)} /></label>
       <label><span className="label">Default language</span><select className="field" value={form.language} onChange={e => set('language', e.target.value as AIConfig['language'])}><option value="auto">Auto-detect (English / Hindi / Hinglish)</option><option value="en">English</option><option value="hi">Hindi</option><option value="hinglish">Hinglish</option></select></label>
     </section>
 
@@ -101,24 +85,22 @@ function AgentConfig() {
         <span>to</span>
         <input type="time" className="field h-8 w-28" disabled={!day?.enabled} value={day?.end ?? '18:30'} onChange={e => setDay(d, { end: e.target.value })} />
       </div>; })}</div>
-      <label className="block"><span className="label">Outside-business-hours message</span><textarea className="field" rows={2} value={form.outsideHoursMessage} onChange={e => set('outsideHoursMessage', e.target.value)} /></label>
     </section>
 
     <section className="panel space-y-3 p-4">
       <h3 className="text-sm font-semibold">Auto-greet new CRM leads</h3>
       <p className="text-xs text-slate-500">When a lead with a phone number is created in the CRM, WhatsApp them automatically. WhatsApp only allows business-initiated messages via an <b>approved template</b>; the service list with links is sent right after they reply, once the 24-hour window opens.</p>
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.autoGreetNewLeads === true} onChange={e => set('autoGreetNewLeads', e.target.checked)} />Send a WhatsApp greeting when a lead is added</label>
-      <label className="block"><span className="label">Greeting template (must be approved)</span>
+      <label className="block"><span className="label">Meta greeting template (must be approved)</span>
         <select className="field" value={form.autoGreetTemplate ?? ''} onChange={e => set('autoGreetTemplate', e.target.value)}>
           <option value="">— Select a template —</option>
           {approvedTemplates.map(t => <option key={t._id} value={t._id}>{t.templateName} ({t.language})</option>)}
         </select>
         {form.autoGreetNewLeads && !form.autoGreetTemplate && <span className="mt-1 block text-[11px] text-amber-600">Pick a template, or nothing will be sent.</span>}
-        {!approvedTemplates.length && <span className="mt-1 block text-[11px] text-amber-600">No approved templates yet — add one on the Templates tab and mark it approved.</span>}
+        {!approvedTemplates.length && <span className="mt-1 block text-[11px] text-amber-600">No approved Meta templates yet — sync or add one on the Broadcasts tab.</span>}
       </label>
       <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.sendServiceListOnReply !== false} onChange={e => set('sendServiceListOnReply', e.target.checked)} />Send the service list when they reply</label>
-      <label className="block"><span className="label">Service list intro</span><input className="field" value={form.serviceListIntro ?? ''} onChange={e => set('serviceListIntro', e.target.value)} placeholder="Here's a quick look at what we offer:" /></label>
-      <p className="text-[11px] text-slate-400">The list is built from your Knowledge Base products and services — add a link to each one there and it appears here.</p>
+      <p className="text-[11px] text-slate-400">The list is built from your Knowledge Base products and services — add a link to each one there and it appears here. The wording around it is the <b>service_catalogue</b> template.</p>
     </section>
 
     <section className="panel space-y-3 p-4">
@@ -133,9 +115,8 @@ function AgentConfig() {
               onChange={e => set('menuButtonLabels', { ...form.menuButtonLabels, [key]: e.target.value })} />
           </label>)}
       </div>
-      <p className="text-[11px] text-slate-400">WhatsApp caps button labels at 20 characters and allows 3 buttons per message.</p>
-      <label className="block"><span className="label">Message when a human is requested</span><textarea className="field" rows={2} value={form.humanRequestedMessage ?? ''} onChange={e => set('humanRequestedMessage', e.target.value)} /></label>
-      <label className="block"><span className="label">Message when the AI resumes</span><textarea className="field" rows={2} value={form.aiResumedMessage ?? ''} onChange={e => set('aiResumedMessage', e.target.value)} /></label>
+      <p className="text-[11px] text-slate-400">WhatsApp caps button labels at 20 characters and allows 3 buttons per message. The buttons ARIA actually sends are configured on each template; these labels are the defaults used when a template defines none.</p>
+      <p className="text-[11px] text-slate-400">The wording that accompanies a handoff or a return to ARIA lives in the <b>human_handoff</b> and <b>ai_resumed</b> templates.</p>
     </section>
 
     <section className="panel space-y-3 p-4">
@@ -148,6 +129,25 @@ function AgentConfig() {
         <label><span className="label">Max AI messages before escalation</span><input type="number" className="field" value={form.maxAiMessagesBeforeEscalation} onChange={e => set('maxAiMessagesBeforeEscalation', Number(e.target.value))} /></label>
       </div>
       <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={form.globalAiEnabled} onChange={e => set('globalAiEnabled', e.target.checked)} />Global AI Auto-Reply ON</label>
+    </section>
+
+    <section className="panel space-y-3 p-4">
+      <h3 className="text-sm font-semibold">Lead scoring</h3>
+      <p className="text-xs text-slate-500">Points ARIA adds when it detects each signal, capped at 100, plus the score at which a lead becomes Warm, Qualified or Hot. Crossing the Hot threshold fires the internal hot-lead alert.</p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {([['requestedPricing', 'Requested pricing'], ['requestedDemo', 'Requested a demo'], ['requestedQuotation', 'Requested a quotation'], ['providedBudget', 'Provided a budget'], ['timelineUnder30Days', 'Timeline under 30 days'], ['providedCompany', 'Provided a company'], ['providedEmail', 'Provided an email'], ['repeatedEngagement', 'Repeated engagement'], ['requestedHuman', 'Asked for a human']] as const).map(([key, text]) =>
+          <label key={key}><span className="label">{text}</span>
+            <input type="number" min={0} max={100} className="field" value={scoring[key] ?? 0}
+              onChange={e => set('leadScoring', { ...scoring, [key]: Number(e.target.value) })} />
+          </label>)}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {([['warmThreshold', 'Warm from'], ['qualifiedThreshold', 'Qualified from'], ['hotThreshold', 'Hot from']] as const).map(([key, text]) =>
+          <label key={key}><span className="label">{text}</span>
+            <input type="number" min={0} max={100} className="field" value={scoring[key] ?? 0}
+              onChange={e => set('leadScoring', { ...scoring, [key]: Number(e.target.value) })} />
+          </label>)}
+      </div>
     </section>
 
     <section className="panel space-y-2 p-4">
@@ -163,7 +163,7 @@ function AgentConfig() {
   </div>;
 }
 
-function Accounts() {
+export function Accounts() {
   const qc = useQueryClient();
   const accounts = useQuery({ queryKey: ['wa-accounts'], queryFn: () => api<WhatsAppAccountRow[]>('/whatsapp/accounts') });
   const [form, setForm] = useState({ label: '', phoneNumberId: '', businessAccountId: '', displayPhoneNumber: '' });

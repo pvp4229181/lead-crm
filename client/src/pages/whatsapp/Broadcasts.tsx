@@ -8,7 +8,14 @@ import { Button, Empty, Loading, Modal, RowMenu } from '../../components/ui';
 const STATUS_TONE: Record<string, string> = { PENDING: 'bg-amber-100 text-amber-700', APPROVED: 'bg-emerald-100 text-emerald-700', REJECTED: 'bg-red-100 text-red-700' };
 const CAMPAIGN_TONE: Record<string, string> = { draft: 'bg-slate-100 text-slate-600', scheduled: 'bg-sky-100 text-sky-700', sending: 'bg-amber-100 text-amber-700', completed: 'bg-emerald-100 text-emerald-700', failed: 'bg-red-100 text-red-700', cancelled: 'bg-slate-100 text-slate-500' };
 
-export function Templates() {
+/**
+ * The Meta-approved message template registry.
+ *
+ * These are NOT ARIA automation templates: they are WhatsApp Cloud API templates, owned and
+ * approved by Meta, and the only thing WhatsApp allows a business to send to someone who
+ * has not messaged in the last 24 hours. ARIA's own messaging lives under the Templates tab.
+ */
+export function MetaTemplates() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const templates = useQuery({ queryKey: ['wa-templates'], queryFn: () => api<WATemplate[]>('/whatsapp/templates') });
@@ -25,7 +32,10 @@ export function Templates() {
 
   return <div>
     <div className="mb-3 flex items-center justify-between gap-3">
-      <p className="text-xs text-slate-500">Templates must be approved by Meta before they can be used in campaigns or sent outside a 24-hour customer session.</p>
+      <div className="text-xs text-slate-500">
+        <b>Meta message templates.</b> Approved by Meta and required to open a conversation outside the 24-hour customer session.
+        ARIA's own automated messages are on the <b>Templates</b> tab.
+      </div>
       <div className="flex shrink-0 gap-2">
         <Button className="h-8" disabled={sync.isPending} onClick={() => { setSyncNote(''); sync.mutate(); }}><RefreshCw size={14} className={sync.isPending ? 'animate-spin' : undefined} />{sync.isPending ? 'Syncing…' : 'Sync from Meta'}</Button>
         <Button className="btn-primary h-8" onClick={() => setOpen(true)}><Plus size={14} />New template</Button>
@@ -101,8 +111,8 @@ function CampaignForm({ onClose }: { onClose: () => void }) {
     <div className="space-y-3 p-5">
       <label><span className="label">Campaign name</span><input required className="field" value={form.campaignName} onChange={e => setForm({ ...form, campaignName: e.target.value })} /></label>
       <label><span className="label">Template</span><select required className="field" value={form.template} onChange={e => setForm({ ...form, template: e.target.value })}><option value="">Select an approved template</option>{approved.map(t => <option key={t._id} value={t._id}>{t.templateName}</option>)}</select>{!approved.length && <p className="mt-1 text-xs text-amber-600">No approved templates yet — approve one on the Templates tab first.</p>}</label>
-      <div><span className="label">Lead temperature</span><div className="flex flex-wrap gap-1">{['Cold', 'Warm', 'Hot', 'Very Hot'].map(t => <button type="button" key={t} className={`badge ${form.temperature.includes(t) ? 'bg-[#0ea5e9] text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => toggle('temperature', t)}>{t}</button>)}</div></div>
-      <div><span className="label">Pipeline stage</span><div className="flex flex-wrap gap-1">{['new', 'contacted', 'qualified', 'proposal', 'negotiation'].map(s => <button type="button" key={s} className={`badge capitalize ${form.stage.includes(s) ? 'bg-[#0ea5e9] text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => toggle('stage', s)}>{s}</button>)}</div></div>
+      <div><span className="label">Lead temperature</span><div className="flex flex-wrap gap-1">{['Cold', 'Warm', 'Qualified', 'Hot'].map(t => <button type="button" key={t} className={`badge ${form.temperature.includes(t) ? 'bg-[#0ea5e9] text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => toggle('temperature', t)}>{t}</button>)}</div></div>
+      <div><span className="label">Pipeline stage</span><div className="flex flex-wrap gap-1">{['new', 'contacted', 'engaged', 'qualified', 'proposal', 'negotiation'].map(s => <button type="button" key={s} className={`badge capitalize ${form.stage.includes(s) ? 'bg-[#0ea5e9] text-white' : 'bg-slate-100 text-slate-600'}`} onClick={() => toggle('stage', s)}>{s}</button>)}</div></div>
       <Button type="button" className="h-8" disabled={previewAudience.isPending} onClick={() => previewAudience.mutate()}>Preview audience size</Button>
       {preview != null && <p className="text-xs text-slate-500">{preview} lead(s) match this audience.</p>}
       {error && <p className="text-xs text-red-600">{error}</p>}

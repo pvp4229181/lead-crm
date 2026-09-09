@@ -31,6 +31,8 @@ ok('default stages created', (await models.PipelineStage.countDocuments()) === 6
 ok('opportunity landed on the first stage', String((await models.PipelineStage.findById((opportunity as any).stage))?.name) === 'New');
 ok('lead marked converted', (await models.Lead.findById(lead._id))?.converted === true);
 ok('default activity types created', (await models.ActivityType.countDocuments()) === 6);
+ok('ARIA automation templates seeded on a fresh workspace', (await models.AutomationTemplate.countDocuments({ source: 'aria' })) >= 12, await models.AutomationTemplate.countDocuments());
+ok('ARIA automations seeded on a fresh workspace', (await models.Automation.countDocuments({ source: 'aria' })) >= 12);
 
 // Second run must be a no-op, not a duplicate-stage generator.
 const before = await models.PipelineStage.countDocuments();
@@ -47,7 +49,7 @@ ok('existing custom stage configuration untouched', names.length === 1 && names[
 
 // --- outbound template send (POST /whatsapp/send) --------------------------
 const { sendTemplate } = await import('../dist/controllers/whatsapp.controller.js');
-const approved = await models.WhatsAppTemplate.create({ templateName: 'welcome_intro', category: 'UTILITY', language: 'en_US', body: 'Hi {{1}}, thanks for your interest!', status: 'APPROVED' });
+const approved = await models.WhatsAppTemplate.create({ templateName: 'outbound_intro', category: 'UTILITY', language: 'en_US', body: 'Hi {{1}}, thanks for your interest!', status: 'APPROVED' });
 const pending = await models.WhatsAppTemplate.create({ templateName: 'not_ready', category: 'MARKETING', language: 'en_US', body: 'Hello', status: 'PENDING' });
 const target = await models.Lead.create({ title: 'Outbound target', contactName: 'Asha', phone: '+91 98111 22233', createdBy: user._id, updatedBy: user._id });
 
@@ -77,7 +79,7 @@ const outboundConv = await models.WhatsAppConversation.findOne({ phoneNumber: '9
 ok('conversation created for the outbound send', Boolean(outboundConv), outboundConv?.phoneNumber);
 const outboundMsg = await models.WhatsAppMessage.findOne({ conversation: outboundConv?._id, direction: 'OUTBOUND' });
 ok('failed send is recorded, not lost', outboundMsg?.status === 'FAILED', outboundMsg?.status);
-ok('template name stored on the message', outboundMsg?.templateName === 'welcome_intro', outboundMsg?.templateName);
+ok('template name stored on the message', outboundMsg?.templateName === 'outbound_intro', outboundMsg?.templateName);
 ok('caller told the send failed', sent.error?.status === 502, sent.error?.message);
 void optedOutContact;
 
@@ -86,7 +88,7 @@ const { greetNewLead, buildServiceCatalogue } = await import('../dist/services/g
 await models.Service.create({ name: 'Website Maintenance', price: 3000, priceType: 'fixed', link: 'https://nexmogen.example/maintenance', active: true });
 await models.Product.create({ name: 'Property Listing Portal', price: 150000, priceType: 'starting_at', link: 'https://nexmogen.example/portal', active: true });
 
-const cat = await buildServiceCatalogue('Here is what we offer:');
+const cat = await buildServiceCatalogue();
 ok('catalogue lists services with links', /Property Listing Portal/.test(cat ?? '') && /nexmogen.example\/portal/.test(cat ?? ''), cat?.slice(0, 120));
 ok('catalogue shows "from" for starting_at pricing', /from ₹1,50,000/.test(cat ?? ''), cat);
 
@@ -94,15 +96,19 @@ const greetLead = await models.Lead.create({ title: 'Greeting target', contactNa
 
 // Disabled by default: adding a lead must not message anyone unexpectedly.
 await models.AIConfiguration.deleteMany({});
-await models.AIConfiguration.create({ autoGreetNewLeads: false, active: true, provider: 'mock', companyName: 'Configured Company', welcomeMessage: 'Old welcome message' });
+await models.AIConfiguration.create({ autoGreetNewLeads: false, active: true, provider: 'mock', companyName: 'Configured Company', agentRole: 'Old role', qualificationQuestions: ['Old question'] });
 const { getActiveAIConfig, replaceWithRecommendedAgentTemplate } = await import('../dist/services/ai.service.js');
 const migratedAgent = await getActiveAIConfig();
-ok('old AI template is replaced automatically', (migratedAgent.agentTemplateVersion ?? 0) >= 2 && migratedAgent.welcomeMessage !== 'Old welcome message');
-ok('recommended template includes the complete qualification flow', migratedAgent.qualificationQuestions.length >= 8, migratedAgent.qualificationQuestions);
-migratedAgent.welcomeMessage = 'Temporary custom welcome'; await migratedAgent.save();
+ok('old AI configuration is upgraded automatically', (migratedAgent.agentTemplateVersion ?? 0) >= 3 && migratedAgent.agentRole !== 'Old role', migratedAgent.agentRole);
+ok('recommended behaviour includes the complete qualification flow', migratedAgent.qualificationQuestions.length >= 8, migratedAgent.qualificationQuestions);
+// Customer-facing wording is no longer stored here at all - it lives in the automation
+// templates, which is exactly why reapplying this can never overwrite an edited message.
+ok('AI configuration holds no customer-facing copy', !('welcomeMessage' in migratedAgent.toObject()) && !('humanRequestedMessage' in migratedAgent.toObject()));
+ok('lead scoring defaults are present and tunable', (migratedAgent.leadScoring?.hotThreshold ?? 0) === 81, migratedAgent.leadScoring);
+migratedAgent.agentRole = 'Temporary custom role'; await migratedAgent.save();
 const resetAgent = await replaceWithRecommendedAgentTemplate();
-ok('recommended template can be reapplied', resetAgent.welcomeMessage !== 'Temporary custom welcome');
-ok('replacing the template preserves company identity', resetAgent.companyName === 'Configured Company', resetAgent.companyName);
+ok('recommended behaviour can be reapplied', resetAgent.agentRole !== 'Temporary custom role');
+ok('applying the recommended behaviour preserves company identity', resetAgent.companyName === 'Configured Company', resetAgent.companyName);
 ok('no greeting sent while the feature is off', (await greetNewLead(greetLead._id)) === null);
 
 // Enabled, but pointing at an unapproved template — must refuse rather than fail the send.
@@ -188,9 +194,11 @@ ok('clear all preserves notifications belonging to other users', Boolean(await m
 const takeoverRes = resStub();
 await takeover({ user: adminUser, params: { id: String(gConv!._id) } } as any, takeoverRes);
 ok('AI mode switches directly to human mode', takeoverRes.payload?.controlStatus === 'HUMAN_ACTIVE' && takeoverRes.payload?.aiEnabled === false, takeoverRes.payload);
+ok('human takeover sets human mode and pauses automation', takeoverRes.payload?.mode === 'human' && takeoverRes.payload?.automationPaused === true, takeoverRes.payload);
 const resumeRes = resStub();
 await resumeAi({ user: adminUser, params: { id: String(gConv!._id) } } as any, resumeRes);
 ok('human mode switches directly back to AI mode', resumeRes.payload?.controlStatus === 'AI_ACTIVE' && resumeRes.payload?.aiEnabled === true, resumeRes.payload);
+ok('returning to AI mode resumes automation', resumeRes.payload?.mode === 'ai' && resumeRes.payload?.automationPaused === false, resumeRes.payload);
 await models.WhatsAppConversation.updateOne({ _id: gConv!._id }, { controlStatus: 'WAITING_HUMAN', aiEnabled: false });
 const waitingResumeRes = resStub();
 await resumeAi({ user: adminUser, params: { id: String(gConv!._id) } } as any, waitingResumeRes);
@@ -269,6 +277,22 @@ ok('that chat is still there', (await models.WhatsAppConversation.countDocuments
 const { identifyOrCreateForPhone } = await import('../dist/services/conversation.service.js');
 const reopened = await identifyOrCreateForPhone('919870011122', 'Neha');
 ok('the customer can start a fresh chat after deletion', Boolean(reopened?.conversation ?? reopened), reopened);
+
+// --- ARIA migration removes only what the old system seeded ------------------
+const { migrateToAriaAutomation } = await import('../dist/automation/migrate.js');
+await models.WhatsAppTemplate.create([
+  { templateName: 'welcome_intro', category: 'UTILITY', language: 'en_US', body: 'Legacy demo template', status: 'APPROVED' },
+  { templateName: 'demo_reminder', category: 'UTILITY', language: 'en_US', body: 'Legacy demo template', status: 'APPROVED' },
+]);
+const adminTemplate = await models.AutomationTemplate.create({
+  templateName: 'My own template', templateKey: 'my_own_template', category: 'other', trigger: 'new_whatsapp_lead',
+  message: 'Hand written by an admin', status: 'active', source: 'custom',
+});
+await models.AutomationTemplate.updateOne({ templateKey: 'welcome_message' }, { message: 'Edited by an admin' });
+const report = await migrateToAriaAutomation();
+ok('legacy demo Meta templates removed', report.legacyMetaTemplatesRemoved.length === 2, report.legacyMetaTemplatesRemoved);
+ok('admin-created template is never deleted', Boolean(await models.AutomationTemplate.findById(adminTemplate._id)));
+ok('admin edits to an ARIA template survive re-seeding', (await models.AutomationTemplate.findOne({ templateKey: 'welcome_message' }))?.message === 'Edited by an admin');
 
 await mongoose.disconnect();
 await mongo.stop();

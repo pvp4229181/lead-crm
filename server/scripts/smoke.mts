@@ -15,11 +15,31 @@ process.env.MONGODB_URI = mongo.getUri('smoketest');
 const { connectDatabase } = await import('../dist/config/database.js');
 const models = await import('../dist/models/index.js');
 const { processInboundMessage } = await import('../dist/pipeline/whatsapp.pipeline.js');
+const { migrateToAriaAutomation } = await import('../dist/automation/migrate.js');
+const { runFollowUps } = await import('../dist/automation/scheduler.service.js');
 
 await connectDatabase();
 
-const ok = (label: string, condition: unknown, detail?: unknown) =>
+// --- 0. ARIA automation pack -----------------------------------------------
+// The pipeline has no hardcoded customer-facing copy any more, so the templates must
+// exist before a single message is processed.
+const migration = await migrateToAriaAutomation();
+
+let failures = 0;
+const ok = (label: string, condition: unknown, detail?: unknown) => {
+  if (!condition) failures += 1;
   console.log(`${condition ? 'PASS' : 'FAIL'}  ${label}${condition ? '' : `  -> ${JSON.stringify(detail)}`}`);
+};
+
+const ARIA_KEYS = ['welcome_message','lead_qualification','product_service_enquiry','appointment_booking','human_handoff','quotation_ready','no_response_follow_up','hot_lead_alert','payment_reminder','payment_confirmation','order_project_status','customer_feedback'];
+ok('12 ARIA templates seeded', (await models.AutomationTemplate.countDocuments({ templateKey: { $in: ARIA_KEYS } })) === 12, migration.templatesCreated);
+ok('ARIA automations seeded', (await models.Automation.countDocuments({ source: 'aria', status: 'active' })) >= 12);
+ok('no legacy follow-up rules remain', !(await mongoose.connection.db!.listCollections().toArray()).some(c => c.name === 'followuprules'));
+
+// Re-running the migration must not duplicate anything (spec §17).
+const beforeRerun = await models.AutomationTemplate.countDocuments();
+await migrateToAriaAutomation();
+ok('migration is idempotent', (await models.AutomationTemplate.countDocuments()) === beforeRerun, { beforeRerun, after: await models.AutomationTemplate.countDocuments() });
 
 // A realistic workspace: notifications and round-robin assignment both need real users.
 const [adminRole, salesRole] = await models.Role.create([
@@ -75,7 +95,7 @@ const lead2 = await models.Lead.findById(lead!._id);
 const conv2 = await models.WhatsAppConversation.findById(conv!._id);
 ok('lead score increased after qualification signals', (lead2?.leadScore ?? 0) > (lead?.leadScore ?? 0), { before: lead?.leadScore, after: lead2?.leadScore });
 ok('meeting request created an Activity', (await models.Activity.countDocuments({ relatedId: lead!._id })) > 0);
-ok('stage advanced past contacted', ['qualified', 'proposal', 'negotiation'].includes(String(lead2?.qualificationStatus)), lead2?.qualificationStatus);
+ok('stage advanced past contacted', ['engaged', 'qualified', 'proposal', 'negotiation'].includes(String(lead2?.qualificationStatus)), lead2?.qualificationStatus);
 ok('stage change logged to timeline', (await models.TimelineEvent.countDocuments({ relatedModel: 'Lead', relatedId: lead!._id, eventType: 'stage_changed' })) > 0);
 ok('temperature classified', Boolean(lead2?.leadTemperature), `${lead2?.leadTemperature} @ ${lead2?.leadScore}`);
 
@@ -133,7 +153,14 @@ await processInboundMessage({
   timestamp: new Date(), type: 'text', text: 'hi',
 });
 const menuConv = await models.WhatsAppConversation.findOne({ phoneNumber: '918111222333' });
-ok('welcome menu sent on first contact', (await models.WhatsAppMessage.countDocuments({ conversation: menuConv?._id, type: 'interactive' })) === 1);
+ok('welcome template sent on first contact', (await models.WhatsAppMessage.countDocuments({ conversation: menuConv?._id, type: 'interactive' })) === 1);
+const welcomeMessage = await models.WhatsAppMessage.findOne({ conversation: menuConv?._id, type: 'interactive', direction: 'OUTBOUND' });
+ok('welcome message came from the ARIA template', Boolean(welcomeMessage?.automationTemplate), welcomeMessage?.text?.slice(0, 40));
+ok('welcome message carries the ARIA wording', welcomeMessage?.text?.includes("I'm ARIA, your AI assistant"), welcomeMessage?.text?.slice(0, 60));
+ok('unresolved variables never reach the customer', !/\{\{/.test(welcomeMessage?.text ?? ''), welcomeMessage?.text);
+// WhatsApp has no credentials in this sandbox, so the send is recorded as failed —
+// what matters here is that the run was logged at all, with its template attached.
+ok('automation run was logged', (await models.AutomationLog.countDocuments({ trigger: 'new_whatsapp_lead' })) > 0);
 
 // Customer taps "Talk to a human".
 await processInboundMessage({
@@ -171,6 +198,34 @@ await processInboundMessage({
 });
 ok('AI replies again after resuming', (await models.WhatsAppMessage.countDocuments({ conversation: afterAi?._id, aiGenerated: true })) > aiCountBefore);
 
+// --- 8. follow-up automation -----------------------------------------------
+// Backdate the last inbound so the 24-hour no-response automation becomes due.
+await models.WhatsAppConversation.updateOne({ _id: afterAi!._id }, { mode: 'ai', controlStatus: 'AI_ACTIVE', automationPaused: false, lastInboundAt: new Date(Date.now() - 48 * 3600_000), followUpsSent: [] });
+const followUpBefore = await models.WhatsAppMessage.countDocuments({ conversation: afterAi!._id });
+const followUpRun = await runFollowUps();
+const followUpConv = await models.WhatsAppConversation.findById(afterAi!._id);
+ok('no-response follow-up sent', (await models.WhatsAppMessage.countDocuments({ conversation: afterAi!._id })) > followUpBefore, followUpRun);
+ok('follow-up attempt recorded against the automation', (followUpConv?.followUpsSent ?? []).some(entry => entry.rule === 'aria_no_response_follow_up'), followUpConv?.followUpsSent);
+
+// Running it again immediately must not chase the same lead twice.
+const afterFirstFollowUp = await models.WhatsAppMessage.countDocuments({ conversation: afterAi!._id });
+await runFollowUps();
+ok('follow-up is not repeated on the next tick', (await models.WhatsAppMessage.countDocuments({ conversation: afterAi!._id })) === afterFirstFollowUp);
+
+// A human owning the conversation must stop customer-facing follow-ups entirely (spec §14).
+await models.WhatsAppConversation.updateOne({ _id: afterAi!._id }, { mode: 'human', controlStatus: 'HUMAN_ACTIVE', automationPaused: true, followUpsSent: [], lastInboundAt: new Date(Date.now() - 48 * 3600_000) });
+const beforeHumanTick = await models.WhatsAppMessage.countDocuments({ conversation: afterAi!._id });
+await runFollowUps();
+ok('follow-ups stop once a human takes over', (await models.WhatsAppMessage.countDocuments({ conversation: afterAi!._id })) === beforeHumanTick);
+
+// --- 9. internal hot lead alert never reaches the customer -------------------
+ok('hot lead alert is never sent to the customer', (await models.WhatsAppMessage.countDocuments({ text: /HOT LEAD/ })) === 0);
+
+// --- 10. templates are the only source of customer-facing copy ---------------
+const outbound = await models.WhatsAppMessage.find({ direction: 'OUTBOUND', deletedAt: { $exists: false } }).select('text').lean();
+ok('no unresolved variables in any outbound message', outbound.every(message => !/\{\{/.test(message.text ?? '')), outbound.filter(m => /\{\{/.test(m.text ?? '')).map(m => m.text));
+
 await mongoose.disconnect();
 await mongo.stop();
-console.log('\nsmoke test complete');
+console.log(`\nsmoke test complete — ${failures} failure(s)`);
+if (failures) process.exit(1);

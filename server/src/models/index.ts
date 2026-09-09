@@ -36,9 +36,12 @@ const leadSchema = new Schema({
   // Kept separate from `status` above (which drives lead→opportunity conversion) so the AI's own
   // stage machine can't corrupt that flow.
   leadScore: { type: Number, min: 0, max: 100, default: 0 },
-  leadTemperature: { type: String, enum: ['Cold', 'Warm', 'Hot', 'Very Hot'], default: 'Cold' },
-  qualificationStatus: { type: String, enum: ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'won', 'lost'], default: 'new' },
-  customerIntent: String, budget: String, purchaseTimeline: String, quantity: String,
+  // 'Very Hot' is retained so historical rows stay valid; ARIA's scoring bands
+  // (see services/qualification.service.ts) classify into Cold/Warm/Qualified/Hot.
+  leadTemperature: { type: String, enum: ['Cold', 'Warm', 'Qualified', 'Hot', 'Very Hot'], default: 'Cold' },
+  qualificationStatus: { type: String, enum: ['new', 'contacted', 'engaged', 'qualified', 'proposal', 'negotiation', 'won', 'lost'], default: 'new' },
+  customerIntent: String, budget: String, purchaseTimeline: String, quantity: String, location: String,
+  qualificationReason: String,
   requirements: [String], painPoints: [String], objections: [String], productInterest: [String],
   aiSummary: String, recommendedNextAction: String, salesProbability: { type: Number, min: 0, max: 100 }, lastAiAnalysisAt: Date,
 }, { timestamps: true });
@@ -110,19 +113,19 @@ const businessHoursSchema = { timezone: { type: String, default: 'Asia/Kolkata' 
 const aiConfigurationSchema = new Schema({
   waAccount: ref('WhatsAppAccount'),
   agentTemplateVersion: { type: Number, default: 0 },
-  agentName: { type: String, default: 'Aria' },
+  agentName: { type: String, default: 'ARIA' },
   agentRole: { type: String, default: 'Sales Assistant' },
   companyName: { type: String, default: 'Our Company' },
   companyDescription: String,
-  welcomeMessage: { type: String, default: "Hi! Thanks for reaching out. How can I help you today?" },
   tone: { type: String, enum: ['Professional', 'Friendly', 'Casual', 'Sales-focused', 'Custom'], default: 'Friendly' },
   customTone: String,
   language: { type: String, enum: ['en', 'hi', 'hinglish', 'auto'], default: 'auto' },
   qualificationQuestions: [String],
   businessHours: businessHoursSchema,
-  outsideHoursMessage: { type: String, default: "Thanks for your message! Our team is currently offline and will get back to you during business hours." },
   // Lead-side mode switching: the customer picks AI vs human from buttons in WhatsApp,
-  // instead of the model having to infer it from their phrasing.
+  // instead of the model having to infer it from their phrasing. The message bodies that
+  // accompany these buttons are AutomationTemplates (`human_handoff`, `ai_resumed`), never
+  // stored here — this section only configures whether and how the buttons appear.
   welcomeMenuEnabled: { type: Boolean, default: true },
   humanHandoffButtonEnabled: { type: Boolean, default: true },
   menuButtonLabels: {
@@ -131,15 +134,28 @@ const aiConfigurationSchema = new Schema({
     human: { type: String, default: 'Talk to a human' },
     ai: { type: String, default: 'Back to AI' },
   },
-  humanRequestedMessage: { type: String, default: "Sure — I'm connecting you with a member of our team. Someone will reply here shortly." },
-  aiResumedMessage: { type: String, default: "You're back with our AI assistant. How can I help?" },
   // Auto-greeting new CRM leads. WhatsApp only permits business-initiated messages via an
-  // approved template, so the greeting is a template; the service catalogue (free-form,
-  // with links) can only follow once the customer replies and opens the 24-hour window.
+  // approved Meta template, so the greeting is a Meta template; the service catalogue
+  // (free-form, with links) can only follow once the customer replies and opens the
+  // 24-hour window.
   autoGreetNewLeads: { type: Boolean, default: false },
   autoGreetTemplate: ref('WhatsAppTemplate'),
   sendServiceListOnReply: { type: Boolean, default: true },
-  serviceListIntro: { type: String, default: "Here's a quick look at what we offer:" },
+  // Configurable lead scoring (spec §5). Points are additive and the total is capped at 100.
+  leadScoring: {
+    requestedPricing: { type: Number, default: 10 },
+    requestedDemo: { type: Number, default: 20 },
+    requestedQuotation: { type: Number, default: 25 },
+    providedBudget: { type: Number, default: 15 },
+    timelineUnder30Days: { type: Number, default: 15 },
+    providedCompany: { type: Number, default: 5 },
+    providedEmail: { type: Number, default: 5 },
+    repeatedEngagement: { type: Number, default: 5 },
+    requestedHuman: { type: Number, default: 10 },
+    warmThreshold: { type: Number, default: 31 },
+    qualifiedThreshold: { type: Number, default: 61 },
+    hotThreshold: { type: Number, default: 81 },
+  },
   provider: { type: String, enum: ['anthropic', 'openai', 'openrouter', 'mock'], default: 'mock' },
   aiModel: String,
   creativity: { type: Number, min: 0, max: 1, default: 0.4 },
@@ -166,10 +182,17 @@ const whatsAppConversationSchema = new Schema({
   customerName: String,
   waAccount: ref('WhatsAppAccount'),
   assignedTo: ref('User'),
-  status: { type: String, enum: ['open', 'pending', 'resolved', 'archived'], default: 'open' },
+  status: { type: String, enum: ['open', 'pending', 'resolved', 'archived', 'human_handoff', 'assigned'], default: 'open' },
   controlStatus: { type: String, enum: ['AI_ACTIVE', 'WAITING_HUMAN', 'HUMAN_ACTIVE', 'AI_PAUSED'], default: 'AI_ACTIVE' },
+  // Spec §14. `mode` is the plain-language view of controlStatus that the automation
+  // engine and the admin UI both read; conversation.service keeps the two in step.
+  mode: { type: String, enum: ['ai', 'human', 'hybrid'], default: 'ai' },
   aiEnabled: { type: Boolean, default: true },
   humanTakeover: { type: Boolean, default: false },
+  // Set when a human owns the chat or the customer opted out; the scheduler refuses to
+  // send customer-facing follow-ups while either is true.
+  automationPaused: { type: Boolean, default: false },
+  optedOut: { type: Boolean, default: false },
   aiMessageCount: { type: Number, default: 0 },
   language: { type: String, enum: ['en', 'hi', 'hinglish'], default: 'en' },
   lastMessage: String,
@@ -181,9 +204,12 @@ const whatsAppConversationSchema = new Schema({
   detectedIntent: { type: String, enum: ['GENERAL_INQUIRY', 'PRODUCT_INQUIRY', 'PRICING_REQUEST', 'DEMO_REQUEST', 'MEETING_REQUEST', 'CALLBACK_REQUEST', 'PURCHASE_INTENT', 'NEGOTIATION', 'SUPPORT_REQUEST', 'COMPLAINT', 'HUMAN_REQUEST', 'NOT_INTERESTED', 'OTHER'] },
   tags: [ref('Tag')],
   archived: { type: Boolean, default: false },
+  // One entry per follow-up automation attempt. `rule` holds the automation key, so
+  // maxAttempts is enforced by counting entries rather than by a separate counter.
   followUpsSent: [{ rule: String, at: { type: Date, default: Date.now } }],
   greetedAt: Date,
   serviceListSentAt: Date,
+  lastAutomationAt: Date,
 }, { timestamps: true });
 whatsAppConversationSchema.index({ phoneNumber: 1 }, { unique: true });
 whatsAppConversationSchema.index({ status: 1, lastMessageAt: -1 });
@@ -214,6 +240,11 @@ const whatsAppMessageSchema = new Schema({
   failReason: String,
   aiGenerated: { type: Boolean, default: false },
   sentBy: ref('User'),
+  // Which automation/template produced this message, for the log trail and for the
+  // idempotency check that stops a retried automation sending the same text twice.
+  automation: ref('Automation'),
+  automationTemplate: ref('AutomationTemplate'),
+  dedupeKey: String,
   deletedAt: Date,
   deletedBy: ref('User'),
   intent: String,
@@ -221,6 +252,7 @@ const whatsAppMessageSchema = new Schema({
   metadata: { type: Schema.Types.Mixed, default: {} },
 }, { timestamps: true });
 whatsAppMessageSchema.index({ whatsappMessageId: 1 }, { unique: true, sparse: true });
+whatsAppMessageSchema.index({ dedupeKey: 1 }, { unique: true, sparse: true });
 whatsAppMessageSchema.index({ conversation: 1, timestamp: 1 });
 // Dashboard metrics scan by time across all conversations (messages today, by day,
 // response time), which had no index to stand on.
@@ -286,16 +318,6 @@ const whatsAppCampaignSchema = new Schema({
   createdBy: ref('User', true),
 }, { timestamps: true });
 
-const followUpRuleSchema = new Schema({
-  name: { type: String, required: true },
-  triggerAfterHours: { type: Number, required: true },
-  condition: { type: String, enum: ['no_response', 'hot_lead_inactive'], default: 'no_response' },
-  action: { type: String, enum: ['send_message', 'create_activity', 'notify_salesperson'], required: true },
-  messageText: String,
-  maxOccurrences: { type: Number, default: 1 },
-  active: { type: Boolean, default: true },
-}, { timestamps: true });
-
 export const WhatsAppAccount = mongoose.model('WhatsAppAccount', whatsAppAccountSchema);
 export const AIConfiguration = mongoose.model('AIConfiguration', aiConfigurationSchema);
 export const WhatsAppConversation = mongoose.model('WhatsAppConversation', whatsAppConversationSchema);
@@ -307,4 +329,7 @@ export const FAQ = mongoose.model('FAQ', faqSchema);
 export const KnowledgeArticle = mongoose.model('KnowledgeArticle', knowledgeArticleSchema);
 export const WhatsAppTemplate = mongoose.model('WhatsAppTemplate', whatsAppTemplateSchema);
 export const WhatsAppCampaign = mongoose.model('WhatsAppCampaign', whatsAppCampaignSchema);
-export const FollowUpRule = mongoose.model('FollowUpRule', followUpRuleSchema);
+
+// ARIA automation engine — templates, automations, logs and the delayed-run queue.
+// Re-exported here so every existing `from '../models/index.js'` import keeps working.
+export * from './automation.js';

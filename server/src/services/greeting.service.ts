@@ -1,16 +1,18 @@
 import mongoose from 'mongoose';
 import { Lead, Product, Service, WhatsAppConversation, WhatsAppTemplate } from '../models/index.js';
 import { getActiveAIConfig } from './ai.service.js';
-import { sendTemplateMessage, sendTextMessage } from './whatsapp.service.js';
+import { sendTemplateMessage } from './whatsapp.service.js';
 import { appendMessage, identifyOrCreateForPhone } from './conversation.service.js';
+import { sendTemplateByKey } from '../automation/automation.service.js';
 import { normalizePhone } from '../utils/phone.js';
 
 const money = (price?: number, currency = 'INR') =>
   (typeof price === 'number' ? new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 0 }).format(price) : undefined);
 
-// Builds the "what we offer" message from the knowledge base, so the catalogue always
-// matches what the AI itself is allowed to quote — no second list to keep in sync.
-export async function buildServiceCatalogue(intro: string): Promise<string | null> {
+// Builds the catalogue lines from the knowledge base, so what ARIA lists always matches
+// what it is allowed to quote — no second list to keep in sync. The surrounding wording
+// lives in the `service_catalogue` automation template, not here.
+export async function buildServiceCatalogue(): Promise<string | null> {
   const [services, products] = await Promise.all([
     Service.find({ active: true }).limit(10).lean(),
     Product.find({ active: true }).limit(10).lean(),
@@ -18,12 +20,11 @@ export async function buildServiceCatalogue(intro: string): Promise<string | nul
   const items = [...services, ...products];
   if (!items.length) return null;
 
-  const lines = items.map(item => {
+  return items.map(item => {
     const price = item.price != null ? ` — ${(item as any).priceType === 'starting_at' ? 'from ' : ''}${money(item.price, item.currency ?? 'INR')}` : '';
     const link = (item as any).link ? `\n  ${(item as any).link}` : '';
     return `• *${item.name}*${price}${link}`;
-  });
-  return `${intro}\n\n${lines.join('\n')}`;
+  }).join('\n');
 }
 
 // Business-initiated, so it must be an approved template — WhatsApp rejects free-form text
@@ -67,14 +68,12 @@ export async function sendServiceCatalogue(conversation: InstanceType<typeof Wha
   const config = await getActiveAIConfig();
   if (!config.sendServiceListOnReply || conversation.serviceListSentAt) return null;
 
-  const body = await buildServiceCatalogue(config.serviceListIntro || "Here's a quick look at what we offer:");
-  if (!body) return null;
+  const serviceList = await buildServiceCatalogue();
+  if (!serviceList) return null;
 
-  const result = await sendTextMessage(conversation.phoneNumber, body);
-  await appendMessage({
-    conversation, direction: 'OUTBOUND', text: body, aiGenerated: true,
-    status: result.ok ? 'SENT' : 'FAILED', whatsappMessageId: result.whatsappMessageId,
+  const result = await sendTemplateByKey('service_catalogue', {
+    conversation, lead: conversation.lead, trigger: 'service_list_due', data: { service_list: serviceList },
   });
-  await WhatsAppConversation.updateOne({ _id: conversation._id }, { serviceListSentAt: new Date() });
+  if (result.status === 'completed') await WhatsAppConversation.updateOne({ _id: conversation._id }, { serviceListSentAt: new Date() });
   return result;
 }

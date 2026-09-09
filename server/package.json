@@ -10,7 +10,9 @@
     "seed": "tsx src/seed/index.ts",
     "smoke": "tsc -p tsconfig.json && tsx scripts/smoke.mts",
     "bootstrap-check": "tsc -p tsconfig.json && tsx scripts/bootstrap-check.mts",
-    "ai-check": "tsc -p tsconfig.json && tsx scripts/ai-check.mts"
+    "ai-check": "tsc -p tsconfig.json && tsx scripts/ai-check.mts",
+    "seed:automation": "tsx src/automation/seed.ts",
+    "automation-check": "tsc -p tsconfig.json && tsx scripts/automation-check.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

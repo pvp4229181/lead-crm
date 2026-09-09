@@ -22,7 +22,7 @@ const Reporting = lazy(() => import('./pages/Reporting'));
 const Configuration = lazy(() => import('./pages/Configuration'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const WhatsApp = lazy(() => import('./pages/WhatsApp'));
-const WhatsAppSettings = lazy(() => import('./pages/whatsapp/Settings'));
+const WhatsAppAutomation = lazy(() => import('./pages/whatsapp/Automation'));
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -51,7 +51,9 @@ export default function App() {
           <Route path="/contacts" element={<Contacts/>}/>
           <Route path="/reporting" element={<Reporting/>}/>
           <Route path="/whatsapp" element={<WhatsApp/>}/>
-          <Route path="/whatsapp/settings" element={canConfigure ? <WhatsAppSettings/> : <Navigate to="/whatsapp" replace/>}/>
+          <Route path="/whatsapp/automation" element={canConfigure ? <WhatsAppAutomation/> : <Navigate to="/whatsapp" replace/>}/>
+          {/* The automation section absorbed the old WhatsApp settings screen. */}
+          <Route path="/whatsapp/settings" element={<Navigate to="/whatsapp/automation" replace/>}/>
           <Route path="/configuration" element={canConfigure ? <Configuration/> : <Navigate to="/" replace/>}/>
           <Route path="/notifications" element={<Notifications/>}/>
           <Route path="/login" element={<Navigate to="/" replace/>}/>

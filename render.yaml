@@ -1,0 +1,62 @@
+# Render blueprint: one always-on Node service running server/src/server.ts, which also
+# serves the built client (see app.ts). Unlike the serverless entry in api/index.ts this
+# keeps a long-lived process, so Socket.IO live updates and the node-cron follow-up job
+# both work, and the Meta webhook URL below never changes again.
+#
+# Deploy: push this repo to GitHub, then Render -> New -> Blueprint -> pick the repo.
+# Every `sync: false` var must be pasted into the dashboard once (they are secrets and
+# deliberately not committed here).
+services:
+  - type: web
+    name: lead-crm
+    runtime: node
+    plan: starter          # always-on. The free plan sleeps after 15 min idle, which
+                           # would drop WhatsApp webhook deliveries on cold start.
+    region: singapore      # closest Render region to India
+    branch: main
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: node server/dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Set to this service's own https URL once Render assigns it, e.g.
+      # https://lead-crm.onrender.com — used for the CORS/Socket.IO origin.
+      - key: CLIENT_URL
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_BUSINESS_ACCOUNT_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        sync: false
+      - key: AI_FALLBACK_MODELS
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: INVITE_EXPIRES_HOURS
+        value: "72"
+      - key: CRON_SECRET
+        sync: false

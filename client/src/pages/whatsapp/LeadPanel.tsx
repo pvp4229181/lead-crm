@@ -6,7 +6,7 @@ import { api, date, money } from '../../lib/api';
 import { useToast } from '../../components/Toast';
 import type { Activity, Metadata, WAConversation, WALead } from '../../lib/types';
 
-const TEMP_TONE: Record<string, string> = { Cold: 'bg-slate-100 text-slate-600', Warm: 'bg-amber-100 text-amber-700', Hot: 'bg-orange-100 text-orange-700', 'Very Hot': 'bg-red-100 text-red-700' };
+const TEMP_TONE: Record<string, string> = { Cold: 'bg-slate-100 text-slate-600', Warm: 'bg-amber-100 text-amber-700', Qualified: 'bg-orange-100 text-orange-700', Hot: 'bg-red-100 text-red-700', 'Very Hot': 'bg-red-100 text-red-700' };
 const SENTIMENT_ICON = { positive: <Smile size={14} className="text-emerald-500" />, neutral: <Meh size={14} className="text-slate-400" />, negative: <Frown size={14} className="text-red-500" /> } as const;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div><div className="mt-0.5 text-xs text-slate-700">{children}</div></div>; }

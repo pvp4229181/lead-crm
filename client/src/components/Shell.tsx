@@ -1,14 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Bell, CalendarDays, Check, ChevronDown, ClipboardCheck, ContactRound, Gauge, KanbanSquare, LogOut, MessageCircle, Menu, Search, Settings, Star, UsersRound, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Bell, CalendarDays, Check, ChevronDown, ClipboardCheck, ContactRound, Gauge, KanbanSquare, LogOut, MessageCircle, Menu, Search, Settings, Star, UsersRound, Workflow, X } from 'lucide-react';
 import { useAuth } from '../context/Auth';
 import { api } from '../lib/api';
 import { useHotkey, useLiveInterval, useSocketEvents } from '../lib/hooks';
 import { Avatar } from './ui';
 import { GlobalSearch } from './GlobalSearch';
 
-const nav = [['Dashboard','/',Gauge],['Pipeline','/pipeline',KanbanSquare],['Leads','/leads',ContactRound],['WhatsApp','/whatsapp',MessageCircle],['Activities','/activities',ClipboardCheck],['Calendar','/calendar',CalendarDays],['Contacts','/contacts',UsersRound],['Reporting','/reporting',BarChart3],['Configuration','/configuration',Settings]] as const;
+const nav = [['Dashboard','/',Gauge],['Pipeline','/pipeline',KanbanSquare],['Leads','/leads',ContactRound],['WhatsApp','/whatsapp',MessageCircle],['Automation','/whatsapp/automation',Workflow],['Activities','/activities',ClipboardCheck],['Calendar','/calendar',CalendarDays],['Contacts','/contacts',UsersRound],['Reporting','/reporting',BarChart3],['Configuration','/configuration',Settings]] as const;
 
 export function Shell({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(false);

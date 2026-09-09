@@ -33,6 +33,15 @@ export async function ensureWorkspaceDefaults(force = false) {
       await ActivityType.insertMany(DEFAULT_ACTIVITY_TYPES.map(type => ({ ...type, active: true, icon: 'check' })));
       console.log('Created default activity types');
     }
+    // A workspace created through admin signup never runs `npm run seed`, so ARIA would
+    // have no templates and answer nothing. The migration is idempotent and preserves any
+    // wording an admin has already edited, so it is safe to run on every cold start.
+    const { AutomationTemplate } = await import('../models/index.js');
+    if (await AutomationTemplate.estimatedDocumentCount() === 0) {
+      const { migrateToAriaAutomation } = await import('../automation/migrate.js');
+      const report = await migrateToAriaAutomation();
+      console.log(`Seeded ${report.templatesCreated.length} ARIA automation templates`);
+    }
   } catch (error) {
     ensured = false; // let a later request retry rather than leaving the workspace unusable
     console.error('[bootstrap] could not create workspace defaults', error);

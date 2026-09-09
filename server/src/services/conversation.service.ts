@@ -57,7 +57,7 @@ export async function identifyOrCreateForPhone(rawPhone: string, profileName?: s
     conversation = await WhatsAppConversation.create({
       contact: contact._id, lead: lead._id, phoneNumber: digits, customerName: profileName,
       assignedTo: lead.salesperson ?? undefined,
-      status: 'open', controlStatus: 'AI_ACTIVE', aiEnabled: true,
+      status: 'open', controlStatus: 'AI_ACTIVE', mode: 'ai', aiEnabled: true,
     });
   } else {
     let dirty = false;
@@ -80,6 +80,11 @@ export type AppendMessageInput = {
   location?: { lat: number; lng: number; name?: string; address?: string };
   templateName?: string;
   aiGenerated?: boolean;
+  // Set when an automation produced the message: the refs power the log trail, and
+  // dedupeKey is the unique key that stops a retried automation sending twice.
+  automation?: mongoose.Types.ObjectId | string;
+  automationTemplate?: mongoose.Types.ObjectId | string;
+  dedupeKey?: string;
   sentBy?: mongoose.Types.ObjectId | string;
   status?: string;
   timestamp?: Date;
@@ -96,6 +101,7 @@ export async function appendMessage(input: AppendMessageInput) {
     mediaId: input.mediaId, mediaUrl: input.mediaUrl, mediaMimeType: input.mediaMimeType, caption: input.caption, filename: input.filename,
     location: input.location, templateName: input.templateName,
     aiGenerated: Boolean(input.aiGenerated), sentBy: input.sentBy,
+    automation: input.automation, automationTemplate: input.automationTemplate, dedupeKey: input.dedupeKey,
     status: input.status ?? (input.direction === 'INBOUND' ? 'DELIVERED' : 'QUEUED'),
     timestamp: input.timestamp ?? new Date(),
   });

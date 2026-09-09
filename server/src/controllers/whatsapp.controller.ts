@@ -9,6 +9,7 @@ import { conversationListQuery, sendMessageInput, sendTemplateInput } from '../v
 import { normalizePhone } from '../utils/phone.js';
 import { accessScope } from '../middleware/auth.js';
 import { emitToConversation } from '../realtime.js';
+import { stopFollowUps } from '../automation/scheduler.service.js';
 
 // Reuses the CRM's own lead visibility rules so a Salesperson cannot message a lead
 // that isn't theirs.
@@ -242,21 +243,34 @@ export async function suggestReply(req: Request, res: Response) {
 export async function setAiEnabled(req: Request, res: Response) {
   const aiEnabled = Boolean(req.body.aiEnabled);
   const existing = await scopedConversation(req, String(req.params.id));
-  const conversation = await WhatsAppConversation.findByIdAndUpdate(existing._id, { aiEnabled, controlStatus: aiEnabled ? 'AI_ACTIVE' : 'AI_PAUSED', ...(aiEnabled ? { aiMessageCount: 0 } : {}) }, { new: true });
+  const conversation = await WhatsAppConversation.findByIdAndUpdate(existing._id, {
+    aiEnabled, controlStatus: aiEnabled ? 'AI_ACTIVE' : 'AI_PAUSED', mode: aiEnabled ? 'ai' : 'hybrid',
+    automationPaused: !aiEnabled, ...(aiEnabled ? { aiMessageCount: 0 } : {}),
+  }, { new: true });
+  // Pausing ARIA must also silence anything already queued for this conversation.
+  if (!aiEnabled) await stopFollowUps(existing._id, 'AI paused by agent');
   emitToConversation(String(existing._id), 'conversation:updated', { conversation: conversation!.toObject() });
   res.json(conversation);
 }
 
 export async function takeover(req: Request, res: Response) {
   const existing = await scopedConversation(req, String(req.params.id));
-  const conversation = await WhatsAppConversation.findByIdAndUpdate(existing._id, { controlStatus: 'HUMAN_ACTIVE', humanTakeover: true, aiEnabled: false, assignedTo: req.user!._id }, { new: true });
+  const conversation = await WhatsAppConversation.findByIdAndUpdate(existing._id, {
+    controlStatus: 'HUMAN_ACTIVE', mode: 'human', humanTakeover: true, aiEnabled: false,
+    automationPaused: true, status: 'assigned', assignedTo: req.user!._id,
+  }, { new: true });
+  // Spec §14: a human owning the chat stops every scheduled customer-facing follow-up.
+  await stopFollowUps(existing._id, 'human agent took over');
   emitToConversation(String(existing._id), 'conversation:updated', { conversation: conversation!.toObject() });
   res.json(conversation);
 }
 
 export async function resumeAi(req: Request, res: Response) {
   const existing = await scopedConversation(req, String(req.params.id));
-  const conversation = await WhatsAppConversation.findByIdAndUpdate(existing._id, { controlStatus: 'AI_ACTIVE', humanTakeover: false, aiEnabled: true, aiMessageCount: 0 }, { new: true });
+  const conversation = await WhatsAppConversation.findByIdAndUpdate(existing._id, {
+    controlStatus: 'AI_ACTIVE', mode: 'ai', humanTakeover: false, aiEnabled: true,
+    automationPaused: false, status: 'open', aiMessageCount: 0,
+  }, { new: true });
   emitToConversation(String(existing._id), 'conversation:updated', { conversation: conversation!.toObject() });
   res.json(conversation);
 }

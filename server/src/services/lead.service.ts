@@ -1,40 +1,78 @@
 import mongoose from 'mongoose';
 import { Lead, TimelineEvent, WhatsAppConversation } from '../models/index.js';
 import type { ConversationAnalysis } from '../ai/provider.js';
-import { calculateLeadScore, classifyTemperature } from './qualification.service.js';
+import { calculateLeadScore, classifyTemperature, isHotTemperature, isNearTermTimeline, scoringRules } from './qualification.service.js';
 import { convertLead } from './crm.service.js';
 import { ensureSystemUser } from '../utils/systemUser.js';
-import { notifyUsers } from './notification.service.js';
+import { getActiveAIConfig } from './ai.service.js';
 
-// Automatic CRM Stage Movement: only ever moves forward along this order (or sideways
-// into 'lost'), so a stray "just curious" message can't undo real qualification progress.
-const STAGE_ORDER = ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'won', 'lost'] as const;
-type Stage = (typeof STAGE_ORDER)[number];
+// Automatic CRM stage movement (spec §6): only ever moves forward along this order (or
+// sideways into 'lost'), so a stray "just curious" message can't undo real qualification
+// progress. `moveQualificationStage` is the only writer, and automations go through it too.
+export const STAGE_ORDER = ['new', 'contacted', 'engaged', 'qualified', 'proposal', 'negotiation', 'won', 'lost'] as const;
+export type Stage = (typeof STAGE_ORDER)[number];
 const rank = (stage: string) => STAGE_ORDER.indexOf(stage as Stage);
+export const isStage = (value: string): value is Stage => STAGE_ORDER.includes(value as Stage);
 
-function nextStage(current: Stage, analysis: ConversationAnalysis, hasRequirements: boolean): Stage {
+function nextStage(current: Stage, analysis: ConversationAnalysis, hasRequirements: boolean, messageCount: number): Stage {
   if (analysis.intent === 'NOT_INTERESTED' && analysis.sentimentConfidence >= 0.6) return 'lost';
   if (current === 'new') return 'contacted';
-  if (current === 'contacted' && hasRequirements) return 'qualified';
+  // Real qualification data beats the engagement heuristic: a lead that stated a budget or
+  // requirement is qualified, not merely engaged, however few messages it took.
+  if ((current === 'contacted' || current === 'engaged') && hasRequirements) return 'qualified';
+  if (current === 'contacted' && messageCount > 2) return 'engaged';
   if (current === 'qualified' && (analysis.wantsPricing || analysis.intent === 'PRICING_REQUEST')) return 'proposal';
   if (current === 'proposal' && analysis.intent === 'NEGOTIATION') return 'negotiation';
   if ((current === 'proposal' || current === 'negotiation') && analysis.buyingIntent && analysis.intent === 'PURCHASE_INTENT') return 'won';
   return current;
 }
 
+/**
+ * Moves a lead's qualification stage, refusing to go backwards unless explicitly allowed.
+ * Returns whether the stage actually changed, and logs a timeline entry when it does.
+ */
+export async function moveQualificationStage(lead: any, target: string, allowBackward = false): Promise<boolean> {
+  if (!isStage(target)) return false;
+  const current = (lead.qualificationStatus ?? 'new') as Stage;
+  const forward = rank(target) > rank(current) || (target === 'lost' && current !== 'lost');
+  if (!forward && !allowBackward) return false;
+  if (target === current) return false;
+
+  const systemUserId = await ensureSystemUser();
+  lead.qualificationStatus = target;
+  if (target === 'qualified') lead.status = 'qualified';
+  if (target === 'lost') lead.status = 'disqualified';
+  lead.updatedBy = new mongoose.Types.ObjectId(systemUserId);
+  await lead.save();
+
+  await TimelineEvent.create({
+    createdBy: systemUserId, relatedModel: 'Lead', relatedId: lead._id,
+    eventType: 'stage_changed', message: `ARIA moved lead to "${target}"${lead.leadTemperature ? ` (${lead.leadTemperature})` : ''}`,
+  });
+  if (target === 'won') {
+    // Already converted, or no pipeline stage configured — leave it as a won qualification.
+    try { await convertLead(String(lead._id), new mongoose.Types.ObjectId(systemUserId)); } catch { /* non-fatal */ }
+  }
+  return true;
+}
+
 export type ApplyAnalysisResult = { lead: InstanceType<typeof Lead>; stageChanged: boolean; becameHot: boolean };
 
-// Step 11 of the pipeline: fold the AI's read of the conversation into the CRM lead —
-// merge in newly-learned facts (never blank out something already known), recompute
-// score/temperature, and move the qualification stage forward when warranted.
+// Folds the AI's read of the conversation into the CRM lead: merge in newly-learned facts
+// (never blanking out something already known), recompute score/temperature, and move the
+// qualification stage forward when warranted. Notifications and hot-lead alerts are raised
+// by the automation engine, not here.
 export async function applyAnalysisToLead(leadId: mongoose.Types.ObjectId | string, analysis: ConversationAnalysis, messageCount: number): Promise<ApplyAnalysisResult> {
   const lead = await Lead.findById(leadId);
   if (!lead) throw new Error('Lead not found for AI analysis');
-  const wasHot = lead.leadTemperature === 'Hot' || lead.leadTemperature === 'Very Hot';
+  const config = await getActiveAIConfig();
+  const rules = scoringRules(config);
+  const wasHot = isHotTemperature(lead.leadTemperature);
 
   if (analysis.customerName && !lead.contactName) lead.contactName = analysis.customerName;
   if (analysis.companyName && !lead.companyName) lead.companyName = analysis.companyName;
   if (analysis.email && !lead.email) lead.email = analysis.email;
+  if (analysis.location && !lead.location) lead.location = analysis.location;
   if (analysis.budget) lead.budget = analysis.budget;
   if (analysis.purchaseTimeline) lead.purchaseTimeline = analysis.purchaseTimeline;
   if (analysis.quantity) lead.quantity = analysis.quantity;
@@ -48,45 +86,28 @@ export async function applyAnalysisToLead(leadId: mongoose.Types.ObjectId | stri
   lead.salesProbability = analysis.salesProbability;
   lead.lastAiAnalysisAt = new Date();
 
-  const score = calculateLeadScore({
+  const { score, reasons } = calculateLeadScore({
     messageCount,
-    hasName: Boolean(lead.contactName), hasCompany: Boolean(lead.companyName),
-    hasBudget: Boolean(lead.budget), hasTimeline: Boolean(lead.purchaseTimeline),
-    requestedPricing: analysis.wantsPricing, requestedDemo: analysis.wantsDemo, requestedMeeting: analysis.wantsMeeting,
-    buyingIntent: analysis.buyingIntent,
-  });
+    hasCompany: Boolean(lead.companyName), hasEmail: Boolean(lead.email), hasBudget: Boolean(lead.budget),
+    timelineUnder30Days: isNearTermTimeline(lead.purchaseTimeline),
+    requestedPricing: analysis.wantsPricing,
+    requestedDemo: analysis.wantsDemo || analysis.wantsMeeting,
+    requestedQuotation: analysis.intent === 'PRICING_REQUEST' && Boolean(lead.budget),
+    requestedHuman: analysis.wantsHuman,
+  }, rules);
   lead.leadScore = score;
-  lead.leadTemperature = classifyTemperature(score);
-
-  const hasRequirements = lead.requirements.length > 0 || Boolean(lead.budget) || Boolean(lead.purchaseTimeline);
-  const current = (lead.qualificationStatus ?? 'new') as Stage;
-  const proposed = nextStage(current, analysis, hasRequirements);
-  const stageChanged = rank(proposed) > rank(current) || (proposed === 'lost' && current !== 'lost');
-  if (stageChanged) {
-    lead.qualificationStatus = proposed;
-    if (proposed === 'qualified') lead.status = 'qualified';
-    if (proposed === 'lost') lead.status = 'disqualified';
-  }
+  lead.leadTemperature = classifyTemperature(score, rules);
+  lead.qualificationReason = reasons.join('; ') || undefined;
 
   const systemUserId = await ensureSystemUser();
   lead.updatedBy = new mongoose.Types.ObjectId(systemUserId);
   await lead.save();
 
-  if (stageChanged) {
-    await TimelineEvent.create({
-      createdBy: systemUserId, relatedModel: 'Lead', relatedId: lead._id,
-      eventType: 'stage_changed', message: `AI moved lead to "${proposed}"${lead.leadTemperature ? ` (${lead.leadTemperature})` : ''}`,
-    });
-    if (proposed === 'won') {
-      try { await convertLead(String(lead._id), new mongoose.Types.ObjectId(systemUserId)); } catch { /* already converted or no pipeline stage configured — leave as won qualification only */ }
-    }
-  }
+  const hasRequirements = lead.requirements.length > 0 || Boolean(lead.budget) || Boolean(lead.purchaseTimeline);
+  const proposed = nextStage((lead.qualificationStatus ?? 'new') as Stage, analysis, hasRequirements, messageCount);
+  const stageChanged = await moveQualificationStage(lead, proposed);
 
-  const becameHot = !wasHot && (lead.leadTemperature === 'Hot' || lead.leadTemperature === 'Very Hot');
-  if (becameHot && lead.salesperson) {
-    await notifyUsers([lead.salesperson], 'hot_lead', 'Hot lead detected', `${lead.contactName || lead.title} is now a ${lead.leadTemperature} lead.`, `/leads`);
-  }
-
+  const becameHot = !wasHot && isHotTemperature(lead.leadTemperature);
   return { lead, stageChanged, becameHot };
 }
 
@@ -105,4 +126,17 @@ export async function assignSalespersonRoundRobin(): Promise<mongoose.Types.Obje
 
 export async function conversationForLead(leadId: mongoose.Types.ObjectId | string) {
   return WhatsAppConversation.findOne({ lead: leadId });
+}
+
+/** The qualification fields ARIA is still missing, in the order it should ask for them. */
+export function missingQualificationFields(lead: any): string[] {
+  const checks: [string, unknown][] = [
+    ['name', lead?.contactName],
+    ['company', lead?.companyName],
+    ['email', lead?.email],
+    ['interest', lead?.productInterest?.length || lead?.requirements?.length],
+    ['budget', lead?.budget],
+    ['timeline', lead?.purchaseTimeline],
+  ];
+  return checks.filter(([, value]) => !value).map(([field]) => field);
 }

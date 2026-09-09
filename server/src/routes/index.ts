@@ -9,6 +9,7 @@ import * as invitation from '../controllers/invitation.controller.js';
 import * as notification from '../controllers/notification.controller.js';
 import { Activity, Company, Contact, Opportunity, TimelineEvent, WhatsAppConversation } from '../models/index.js';
 import { whatsappApi, whatsappWebhook } from './whatsapp.routes.js';
+import { automationApi } from '../automation/automation.routes.js';
 
 export const api = Router();
 api.use(whatsappWebhook);
@@ -22,6 +23,7 @@ api.post('/auth/logout', auth.logout);
 api.get('/auth/me', requireAuth, auth.me);
 api.use(requireAuth);
 api.use(whatsappApi);
+api.use(automationApi);
 api.get('/admin/roles', authorize('Administrator', 'Sales Manager'), asyncHandler(admin.listRoles));
 api.post('/admin/roles', authorize('Administrator'), asyncHandler(admin.createRole));
 api.patch('/admin/roles/:id', authorize('Administrator'), asyncHandler(admin.updateRole));

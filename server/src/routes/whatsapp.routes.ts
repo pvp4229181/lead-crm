@@ -6,7 +6,7 @@ import * as wa from '../controllers/whatsapp.controller.js';
 import * as ai from '../controllers/whatsapp-ai.controller.js';
 import * as kb from '../controllers/whatsapp-knowledge.controller.js';
 import { verifyWebhook, verifySignature, receiveWebhook } from '../webhooks/whatsapp.webhook.js';
-import { runFollowUps } from '../services/automation.service.js';
+import { runFollowUps } from '../automation/scheduler.service.js';
 
 // Mounted publicly (before requireAuth) — Meta calls these directly, authenticated
 // only by the verify-token handshake and the X-Hub-Signature-256 check.
