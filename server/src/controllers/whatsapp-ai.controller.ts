@@ -3,6 +3,7 @@ import { WhatsAppAccount } from '../models/index.js';
 import { getActiveAIConfig, replaceWithRecommendedAgentTemplate } from '../services/ai.service.js';
 import { aiConfigurationInput, accountInput } from '../validators/whatsapp.validators.js';
 import { ApiError } from '../utils/http.js';
+import { getWebhookSubscription, subscribeWebhook } from '../services/whatsapp.service.js';
 
 export async function getAiSettings(_req: Request, res: Response) {
   res.json(await getActiveAIConfig());
@@ -40,4 +41,14 @@ export async function deleteAccount(req: Request, res: Response) {
   const account = await WhatsAppAccount.findByIdAndDelete(req.params.id);
   if (!account) throw new ApiError(404, 'Account not found');
   res.status(204).end();
+}
+
+export async function webhookSubscription(_req: Request, res: Response) {
+  res.json(await getWebhookSubscription());
+}
+
+export async function enableWebhookSubscription(_req: Request, res: Response) {
+  const result = await subscribeWebhook();
+  if (!result.ok) throw new ApiError(502, result.error ?? 'Meta rejected the webhook subscription');
+  res.json(result);
 }

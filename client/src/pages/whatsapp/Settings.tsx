@@ -170,9 +170,24 @@ export function Accounts() {
   const [error, setError] = useState('');
   const create = useMutation({ mutationFn: () => api('/whatsapp/accounts', { method: 'POST', body: JSON.stringify(form) }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['wa-accounts'] }); setForm({ label: '', phoneNumberId: '', businessAccountId: '', displayPhoneNumber: '' }); }, onError: (e: any) => setError(e?.message ?? 'Could not save.') });
   const remove = useMutation({ mutationFn: (id: string) => api(`/whatsapp/accounts/${id}`, { method: 'DELETE' }), onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-accounts'] }) });
+  const subscription = useQuery({ queryKey: ['wa-webhook-subscription'], queryFn: () => api<{ ok: boolean; configured: boolean; subscribed: boolean; apps?: { id?: string; name?: string }[]; error?: string }>('/whatsapp/webhook-subscription') });
+  const enableInbound = useMutation({
+    mutationFn: () => api<{ subscribed: boolean }>('/whatsapp/webhook-subscription', { method: 'POST' }),
+    onMutate: () => setError(''),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['wa-webhook-subscription'] }),
+    onError: (e: any) => setError(e?.message ?? 'Meta could not subscribe this app.'),
+  });
 
   return <div className="max-w-2xl space-y-4">
     <div className="rounded border border-sky-100 bg-sky-50 p-3 text-xs text-sky-900">The live access token is read from the <code>WHATSAPP_ACCESS_TOKEN</code> server environment variable, never stored here or sent to the browser. This list is for tracking which Meta phone numbers are connected.</div>
+    <div className={`rounded border p-3 text-xs ${subscription.data?.subscribed ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div><b>Inbound message delivery:</b> {subscription.isLoading ? 'Checking Meta…' : subscription.data?.subscribed ? `Enabled${subscription.data.apps?.[0]?.name ? ` for ${subscription.data.apps[0].name}` : ''}` : 'Not enabled'}</div>
+        {!subscription.data?.subscribed && <Button className="h-8" disabled={enableInbound.isPending || subscription.isLoading} onClick={() => enableInbound.mutate()}>{enableInbound.isPending ? 'Enabling…' : 'Enable inbound messages'}</Button>}
+      </div>
+      {!subscription.isLoading && !subscription.data?.subscribed && <p className="mt-1">Callback verification alone is not enough. This subscribes the Meta app to the configured WhatsApp Business Account.</p>}
+      {subscription.data?.error && <p className="mt-1 text-red-700">{subscription.data.error}</p>}
+    </div>
     <div className="panel space-y-2 p-4">
       <div className="grid grid-cols-2 gap-2"><input className="field" placeholder="Label" value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} /><input className="field" placeholder="Display phone number" value={form.displayPhoneNumber} onChange={e => setForm({ ...form, displayPhoneNumber: e.target.value })} /><input className="field" placeholder="Phone Number ID" value={form.phoneNumberId} onChange={e => setForm({ ...form, phoneNumberId: e.target.value })} /><input className="field" placeholder="Business Account ID" value={form.businessAccountId} onChange={e => setForm({ ...form, businessAccountId: e.target.value })} /></div>
       {error && <p className="text-xs text-red-600">{error}</p>}

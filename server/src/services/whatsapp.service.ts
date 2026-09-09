@@ -15,6 +15,13 @@ function credentials() {
 }
 
 type SendResult = { ok: boolean; whatsappMessageId?: string; error?: string };
+export type WebhookSubscriptionResult = {
+  ok: boolean;
+  configured: boolean;
+  subscribed: boolean;
+  apps?: { id?: string; name?: string }[];
+  error?: string;
+};
 
 // Meta's top-level `error.message` is often a bare label ("Authentication Error") that
 // tells the salesperson nothing. The useful text lives in error_user_msg / error_data.details,
@@ -52,6 +59,44 @@ async function post(path: string, body: unknown, token: string): Promise<SendRes
     return { ok: true, whatsappMessageId: json?.messages?.[0]?.id };
   } catch (error: any) {
     return { ok: false, error: error?.message ?? 'Network error contacting WhatsApp API' };
+  }
+}
+
+// Verifying the callback URL only registers the endpoint on the Meta app. Meta will not
+// deliver real customer messages until that app is also subscribed to the WABA itself.
+// These helpers keep the access token server-side and expose only subscription metadata.
+export async function getWebhookSubscription(): Promise<WebhookSubscriptionResult> {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  if (!token || !wabaId) return { ok: false, configured: false, subscribed: false, error: 'WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID are required' };
+  try {
+    const response = await fetch(graphUrl(`${wabaId}/subscribed_apps`), { headers: { Authorization: `Bearer ${token}` } });
+    const json: any = await response.json().catch(() => ({}));
+    if (!response.ok) return { ok: false, configured: true, subscribed: false, error: describeGraphError(json?.error, response.status) };
+    const apps = (json.data ?? []).map((item: any) => ({
+      id: item.whatsapp_business_api_data?.id,
+      name: item.whatsapp_business_api_data?.name,
+    }));
+    return { ok: true, configured: true, subscribed: apps.length > 0, apps };
+  } catch (error: any) {
+    return { ok: false, configured: true, subscribed: false, error: error?.message ?? 'Network error contacting WhatsApp API' };
+  }
+}
+
+export async function subscribeWebhook(): Promise<WebhookSubscriptionResult> {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  if (!token || !wabaId) return { ok: false, configured: false, subscribed: false, error: 'WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID are required' };
+  try {
+    const response = await fetch(graphUrl(`${wabaId}/subscribed_apps`), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const json: any = await response.json().catch(() => ({}));
+    if (!response.ok || json.success !== true) return { ok: false, configured: true, subscribed: false, error: describeGraphError(json?.error, response.status) };
+    return getWebhookSubscription();
+  } catch (error: any) {
+    return { ok: false, configured: true, subscribed: false, error: error?.message ?? 'Network error contacting WhatsApp API' };
   }
 }
 

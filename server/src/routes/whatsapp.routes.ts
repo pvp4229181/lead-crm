@@ -60,6 +60,8 @@ whatsappApi.get('/whatsapp/accounts', managerUp, asyncHandler(ai.listAccounts));
 whatsappApi.post('/whatsapp/accounts', adminOnly, asyncHandler(ai.createAccount));
 whatsappApi.patch('/whatsapp/accounts/:id', adminOnly, asyncHandler(ai.updateAccount));
 whatsappApi.delete('/whatsapp/accounts/:id', adminOnly, asyncHandler(ai.deleteAccount));
+whatsappApi.get('/whatsapp/webhook-subscription', managerUp, asyncHandler(ai.webhookSubscription));
+whatsappApi.post('/whatsapp/webhook-subscription', adminOnly, asyncHandler(ai.enableWebhookSubscription));
 
 for (const kind of ['products', 'services', 'faqs', 'articles'] as const) {
   whatsappApi.get(`/whatsapp/knowledge/${kind}`, asyncHandler(kb.listKnowledge(kind)));
